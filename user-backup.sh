@@ -32,13 +32,13 @@ prompt () {
 # Folders
 target_dir="${HOME}/${HOSTNAME}"
 backups_dir="./Backups"
-development_dir="./Development"
 documents_dir="./Documents"
 downloads_dir="./Downloads"
 music_dir="./Music"
 pictures_dir="./Pictures"
 profiles_dir="./Profiles"
 videos_dir="./Videos"
+wks_dir="./wks"
 
 cd ${HOME}
 
@@ -71,17 +71,6 @@ if [ -d $backups_dir ]; then
   prompt -s ">>> DONE"
 else
   prompt -w ">>> Backups folder doesn't exist..."
-fi
-
-if [ -d $development_dir ]; then
-  prompt -i ">>> Backing up development folder..."
-
-  tar cpfz development.tar.gz $development_dir
-  mv development.tar.gz $target_dir
-
-  prompt -s ">>> DONE"
-else
-  prompt -w ">>> There is no scripts link to make backup..."
 fi
 
 if [ -d $documents_dir ]; then
@@ -148,6 +137,17 @@ if [ -d $videos_dir ]; then
   prompt -s ">>> DONE"
 else
   prompt -w ">>> Videos folder doesn't exist..."
+fi
+
+if [ -d $wks_dir ]; then
+  prompt -i ">>> Backing up workspace [wks] folder..."
+
+  tar cpfz wks.tar.gz $wks_dir
+  mv wks.tar.gz $target_dir
+
+  prompt -s ">>> DONE"
+else
+  prompt -w ">>> Workspace [wks] folder doesn't exist..."
 fi
 
 prompt -s ">>> Backup finalizado! <<<"
