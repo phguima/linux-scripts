@@ -1,62 +1,76 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # fix-cedilla
 #
-# This is a very simple script to configure your personal ".XCompose" file and
-# your environment so that typing 'c will generate a cedilla c instead of an
-# accented c.
+# Configures your personal "~/.XCompose" so that typing 'c generates a cedilla c
+# (ç) instead of an accented c (ć). Follows the same approach as the afpi
+# "desktop" role:
 #
-# For further information, visit:
-# http://github.com/marcopaganini/gnome-cedilla-fix
+#   - creates ~/.XCompose from the system Compose file if it does not exist;
+#   - otherwise edits it in place, keeping your own customizations;
+#   - replaces both the strings (ć/Ć) and the keysyms (U0107/U0106), so apps
+#     that read the keysym instead of the string (e.g. Chromium on Wayland)
+#     also get ç;
+#   - is idempotent: running it again changes nothing.
 #
+# Based on http://github.com/marcopaganini/gnome-cedilla-fix
 # (C) Marco Paganini <paganini@paganini.net>
 
-LANG=${LANG:=en_US.UTF-8}
+set -euo pipefail
+
+LANG=${LANG:-en_US.UTF-8}
 COMPOSE_DIR="/usr/share/X11/locale"
 USER_COMPOSE="$HOME/.XCompose"
-BOLD=$(tput bold)
-RESET=$(tput sgr0)
-
 PROGNAME="${0##*/}"
 
-# Find compose file for the current language.
-system_compose=${COMPOSE_DIR}/$(sed -ne "s/^\([^:]*\):[ \t]*$LANG/\1/p" <"${COMPOSE_DIR}/compose.dir" | head -1)
-if [ -z "${system_compose}" ]; then
-  echo >&2 "${PROGNAME} error: Unable to find a system compose file for your system language (${LANG})"
-  exit 1
+if [[ -t 1 ]] && command -v tput >/dev/null; then
+  BOLD=$(tput bold 2>/dev/null || true)
+  RESET=$(tput sgr0 2>/dev/null || true)
+else
+  BOLD=""; RESET=""
 fi
 
-if [ ! -s "${system_compose}" ]; then
-  echo >&2 "${PROGNAME} error: Unable to open system Compose file: ${system_compose}"
-  exit 1
-fi
+die() { echo >&2 "${PROGNAME} error: $*"; exit 1; }
 
-if [ -s "${USER_COMPOSE}" ]; then
+# Strings and keysyms to replace (ć→ç, Ć→Ç, U0107→ccedilla, U0106→Ccedilla)
+PENDING_RE='ć|Ć|U0107|U0106'
+apply_mapping() {
+  sed -i -e 's/ć/ç/g' -e 's/Ć/Ç/g' \
+         -e 's/U0107/ccedilla/g' -e 's/U0106/Ccedilla/g' "$1"
+}
+
+# Find the compose file for the current language.
+[[ -r ${COMPOSE_DIR}/compose.dir ]] || die "Unable to read ${COMPOSE_DIR}/compose.dir"
+compose_name=$(sed -ne "s/^\([^:]*\):[ \t]*$LANG/\1/p" <"${COMPOSE_DIR}/compose.dir" | head -1)
+[[ -n $compose_name ]] || die "Unable to find a system compose file for your system language (${LANG})"
+system_compose="${COMPOSE_DIR}/${compose_name}"
+[[ -s $system_compose ]] || die "Unable to open system Compose file: ${system_compose}"
+
+if [[ ! -e $USER_COMPOSE ]]; then
+  cp "$system_compose" "$USER_COMPOSE"
+  chmod 0644 "$USER_COMPOSE"
+  echo "Created ${USER_COMPOSE} from ${system_compose}."
+elif ! grep -qE "$PENDING_RE" "$USER_COMPOSE"; then
+  echo "${USER_COMPOSE} already maps 'c to ç. Nothing to do."
+  exit 0
+else
+  backup="${USER_COMPOSE}.$(date +%Y%m%d-%H%M%S).bak"
+  cp -p "$USER_COMPOSE" "$backup"
   echo >&2 "${BOLD}*** WARNING: ***${RESET}"
-  echo >&2 "A file named ${USER_COMPOSE} already exists."
-  echo >&2 "Saving original to ${USER_COMPOSE}.ORIGINAL"
+  echo >&2 "${USER_COMPOSE} already exists; editing it in place."
+  echo >&2 "Backup saved to ${backup}"
   echo >&2
-  rm -f "${USER_COMPOSE}.ORIGINAL"
-  cp -f "${USER_COMPOSE}" "${USER_COMPOSE}.ORIGINAL"
 fi
 
-# Save a copy of the system Compose file into .XCompose, replacing
-# all ocurrences of accented-c by cedilla-c
-sed -e 's/\xc4\x87/\xc3\xa7/g' \
-    -e 's/\xc4\x86/\xc3\x87/g' <"${system_compose}" >"${USER_COMPOSE}"
+apply_mapping "$USER_COMPOSE"
 
 cat <<EOM
-${BOLD}System configuration changed.${RESET}
+${BOLD}Cedilla fix applied to ${USER_COMPOSE}.${RESET}
 
-Please log out of your X session and re-login to effect changes.
-You may need to restart your X server if a simple logout/login does not work.
+Please log out of your session and re-login to effect changes.
 
-To revert the system to the previous state, type the following command:
+To revert, remove ${USER_COMPOSE} (or restore the .bak backup, if one was made).
 
-  rm "${USER_COMPOSE}"
-
-If things don't work after a reboot, make sure your Input Method is configured
-to "Auto" in the Gnome Settings.
-
-Operation complete.
+If things don't work after a re-login, make sure your Input Method is
+configured to "Auto" in the desktop settings.
 EOM
