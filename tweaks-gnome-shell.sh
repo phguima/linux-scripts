@@ -2,11 +2,6 @@
 
 # Colors scheme
 CDEF="\033[0m"                                 	        	# default color
-CCIN="\033[0;36m"                              		        # info color
-CGSC="\033[0;32m"                              		        # success color
-CRER="\033[0;31m"                              		        # error color
-CWAR="\033[0;33m"                              		        # waring color
-b_CDEF="\033[1;37m"                            		        # bold default color
 b_CCIN="\033[1;36m"                            		        # bold info color
 b_CGSC="\033[1;32m"                            		        # bold success color
 b_CRER="\033[1;31m"                            		        # bold error color
@@ -14,17 +9,18 @@ b_CWAR="\033[1;33m"                            		        # bold warning color
 
 # Display message colors
 prompt () {
-	case ${1} in
+	local flag=${1}
+	case ${flag} in
 		"-s"|"--success")
-			echo -e "${b_CGSC}${@/-s/}${CDEF}";;            # print success message
+			shift; echo -e "${b_CGSC}$*${CDEF}";;            # print success message
 		"-e"|"--error")
-			echo -e "${b_CRER}${@/-e/}${CDEF}";;            # print error message
+			shift; echo -e "${b_CRER}$*${CDEF}";;            # print error message
 		"-w"|"--warning")
-			echo -e "${b_CWAR}${@/-w/}${CDEF}";;            # print warning message
+			shift; echo -e "${b_CWAR}$*${CDEF}";;            # print warning message
 		"-i"|"--info")
-			echo -e "${b_CCIN}${@/-i/}${CDEF}";;            # print info message
+			shift; echo -e "${b_CCIN}$*${CDEF}";;            # print info message
 		*)
-			echo -e "$@"
+			echo -e "$*"
 		;;
 	 esac
 }
@@ -36,10 +32,10 @@ prompt "2. After theme install tweaks"
 prompt "-"
 prompt "Q. Quit"
 prompt ""
-read -p "Choose one options: " optionsSelection
+read -r -p "Choose one options: " optionsSelection
         
 # Validate user inserts and converts user selection to an array
-if [[ "$optionsSelection"  =~ ^[Q-q] ]]; then
+if [[ "$optionsSelection"  =~ ^[Qq] ]]; then
     prompt -s ">>>   Script finished   <<<"
     exit 0
 elif [[ "$optionsSelection" == 1 ]]; then
@@ -67,7 +63,7 @@ elif [[ "$optionsSelection" == 1 ]]; then
     prompt -s ">>>   Script finished   <<<"
     exit 0
 elif [[ "$optionsSelection" == 2 ]]; then
-    if [[ "gnome-extensions list | grep user-theme" ]]; then
+    if gnome-extensions list | grep -q user-theme; then
         gsettings set org.gnome.shell enabled-extensions "['user-theme@gnome-shell-extensions.gcampax.github.com']"
         #gsettings set org.gnome.shell.extensions.user-theme name WhiteSur-Dark-nord
     fi

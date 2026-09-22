@@ -1,4 +1,4 @@
-#/bin/bash
+#!/bin/bash
 
 extensions_config_dir="${HOME}/Backups/Gnome/Configs/Extensions/"
 
