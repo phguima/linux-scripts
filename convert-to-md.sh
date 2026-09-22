@@ -26,9 +26,7 @@ find "$SEARCH_DIR" -type f -name "*.pdf" -print0 | while IFS= read -r -d '' pdf;
     
     echo "Converting: $pdf"
     # Execute markitdown and redirect output to the .md file
-    markitdown "$pdf" > "$md" 2>/dev/null
-    
-    if [ $? -eq 0 ]; then
+    if markitdown "$pdf" > "$md" 2>/dev/null; then
         echo "  Success -> $md"
     else
         echo "  Failed -> $pdf"

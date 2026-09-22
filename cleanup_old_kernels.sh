@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-old_kernels=($(dnf repoquery --installonly --latest-limit=-1 -q))
+mapfile -t old_kernels < <(dnf repoquery --installonly --latest-limit=-1 -q)
 if [ "${#old_kernels[@]}" -eq 0 ]; then
     echo "No old kernels found"
     exit 0

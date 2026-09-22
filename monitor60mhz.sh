@@ -32,6 +32,7 @@ except Exception as e:
 
 if [ -n "$ARGS" ]; then
     echo "Configurando monitores: $ARGS"
+    # shellcheck disable=SC2086  # ARGS must split into separate kscreen-doctor arguments
     kscreen-doctor $ARGS
 else
     echo "Nenhum monitor compatível com 60Hz foi encontrado."
