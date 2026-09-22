@@ -100,6 +100,22 @@ if [[ $MODE == pkg ]]; then
   log "Pronto. Reinicie a VM."; exit 0
 fi
 
+# --- remove GA empacotado pela distro (conflita com o do ISO) ---
+if [[ $PM == apt ]]; then
+  DISTRO_GA="$(dpkg-query -W -f='${Package} ${Status}\n' 'virtualbox-guest-*' 2>/dev/null \
+    | awk '/install ok installed/ {print $1}' || true)"
+  if [[ -n $DISTRO_GA ]]; then
+    log "Removendo Guest Additions da distro: $(echo $DISTRO_GA)"
+    apt-get purge -y $DISTRO_GA
+  fi
+else
+  DISTRO_GA="$(rpm -qa 'virtualbox-guest-additions*' 2>/dev/null || true)"
+  if [[ -n $DISTRO_GA ]]; then
+    log "Removendo Guest Additions da distro: $(echo $DISTRO_GA)"
+    $PM remove -y $DISTRO_GA
+  fi
+fi
+
 # --- dependências de compilação ---
 log "Instalando dependências de compilação..."
 if [[ $PM == apt ]]; then
@@ -149,7 +165,8 @@ fi
 
 # --- instala ---
 log "Instalando Guest Additions $WANT_VER..."
-set +e; sh "$MNT/VBoxLinuxAdditions.run" --nox11; rc=$?; set -e
+# responde "yes" ao prompt de "versão já instalada" (restos de instalações anteriores)
+set +e; sh "$MNT/VBoxLinuxAdditions.run" --nox11 <<< yes; rc=$?; set -e
 [[ $rc -eq 0 || $rc -eq 2 ]] || die "Instalador retornou $rc. Veja /var/log/vboxadd-setup.log"
 
 if [[ -n $TARGET_USER ]]; then
