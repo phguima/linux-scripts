@@ -2,8 +2,9 @@
 # plasma-setup.sh — aplica o layout do KDE Plasma definido neste arquivo.
 #
 # Fluxo:
-#   1) mostra os assets da KDE Store para instalar manualmente pelo Discover
-#   2) espera a confirmação e verifica se foram instalados
+#   1) instala a fonte, se faltar (via gerenciador de pacotes, pede sudo)
+#   2) abre os assets da KDE Store no Discover para instalação manual e
+#      espera a confirmação, verificando se foram instalados
 #   3) aplica tema, KWin (KZones) e recria painéis/widgets
 #
 # Requer uma sessão Plasma 6 em execução. Faz backup das configs antes.
@@ -22,7 +23,7 @@ ASSETS=(
 
 LOOK_AND_FEEL="org.kde.breezedark.desktop"
 ICON_THEME="Ars-Dark-Icons"
-FONT_FAMILY="Roboto Medium"          # Fedora: sudo dnf install google-roboto-fonts
+FONT_FAMILY="Roboto Medium"          # instalada no passo 1 se faltar
 
 # Aplicado só se existir na pasta de imagens do usuário (~/Pictures)
 PICTURES_DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")"
@@ -338,47 +339,80 @@ warn() { printf '\e[33m!\e[0m %s\n' "$*"; }
 die()  { printf '\e[31m✘\e[0m %s\n' "$*" >&2; exit 1; }
 ask()  { local a; read -rp "$1 " a; [[ "$a" =~ ^[sS] ]]; }
 
-# Link clicável no terminal (OSC 8); \e\\ é o terminador da sequência
-# shellcheck disable=SC1003
-link() { printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$1" "$1"; }
-
 qdbus() { if command -v qdbus-qt6 >/dev/null; then qdbus-qt6 "$@"; else qdbus6 "$@"; fi; }
 plasma_js() { qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1"; }
 
-# ========================================================= 1) ASSETS =========
+# ========================================================== 1) FONTE =========
 
-step_assets() {
-  bold "━━ 1/3 — Instale os assets pelo Discover"
-  echo "Abra cada link (Ctrl+clique no Konsole) e clique em Instalar:"
-  echo
-  local entry name url path
-  for entry in "${ASSETS[@]}"; do
-    IFS='|' read -r name url path <<<"$entry"
-    if [[ -e "$path" ]]; then
-      printf '  \e[32m✔\e[0m %-22s %s\n' "$name" "$(link "$url")"
-    else
-      printf '  \e[33m•\e[0m %-22s %s\n' "$name" "$(link "$url")"
-    fi
-  done
-  fc-list : family | grep -qiF "$FONT_FAMILY" ||
-    warn "Fonte '$FONT_FAMILY' não encontrada (Fedora: sudo dnf install google-roboto-fonts)"
+step_font() {
+  bold "━━ 1/3 — Fonte"
+  if fc-list : family | grep -iF "$FONT_FAMILY" >/dev/null; then
+    ok "Fonte '$FONT_FAMILY' já instalada"
+    return
+  fi
+  local cmd
+  if command -v dnf >/dev/null; then cmd=(dnf install -y google-roboto-fonts)
+  elif command -v apt-get >/dev/null; then cmd=(apt-get install -y fonts-roboto)
+  elif command -v pacman >/dev/null; then cmd=(pacman -S --noconfirm ttf-roboto)
+  elif command -v zypper >/dev/null; then cmd=(zypper install -y google-roboto-fonts)
+  else warn "Gerenciador de pacotes não suportado — instale a fonte '$FONT_FAMILY' manualmente"; return
+  fi
+  info "Instalando a fonte '$FONT_FAMILY' (sudo ${cmd[*]})"
+  if sudo "${cmd[@]}"; then
+    fc-cache -f >/dev/null 2>&1 || true
+    ok "Fonte instalada"
+  else
+    warn "Falha ao instalar a fonte — o layout será aplicado com a fonte padrão"
+  fi
 }
 
-# ===================================================== 2) CONFIRMAÇÃO ========
+# ========================================================= 2) ASSETS =========
 
-step_confirm() {
-  bold "━━ 2/3 — Confirmação"
-  local entry name url path missing
+open_in_discover() {
+  info "Abrindo $1 no Discover..."
+  plasma-discover "$2" >/dev/null 2>&1 &
+  disown
+}
+
+step_assets() {
+  bold "━━ 2/3 — Assets da KDE Store"
+  echo "Abra cada item no Discover e clique em Instalar."
+  local entry name url path choice missing i
   while true; do
-    until ask "Terminou de instalar tudo? [s/N]"; do :; done
-    missing=()
+    echo
+    i=0
     for entry in "${ASSETS[@]}"; do
+      i=$((i + 1))
       IFS='|' read -r name url path <<<"$entry"
-      [[ -e "$path" ]] || missing+=("$name")
+      if [[ -e "$path" ]]; then
+        printf '  %d) \e[32m✔\e[0m %-22s %s\n' "$i" "$name" "$url"
+      else
+        printf '  %d) \e[33m•\e[0m %-22s %s\n' "$i" "$name" "$url"
+      fi
     done
-    ((${#missing[@]} == 0)) && { ok "Todos os assets instalados"; return; }
-    warn "Ainda não encontrei: ${missing[*]}"
-    ask "Continuar mesmo assim? [s/N]" && return
+    echo
+    read -rp "Número para abrir no Discover, [t] todos os pendentes, [Enter] quando terminar: " choice
+
+    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#ASSETS[@]})); then
+      IFS='|' read -r name url path <<<"${ASSETS[choice - 1]}"
+      open_in_discover "$name" "$url"
+    elif [[ "$choice" =~ ^[tT]$ ]]; then
+      for entry in "${ASSETS[@]}"; do
+        IFS='|' read -r name url path <<<"$entry"
+        [[ -e "$path" ]] || { open_in_discover "$name" "$url"; sleep 2; }
+      done
+    elif [[ -z "$choice" ]]; then
+      missing=()
+      for entry in "${ASSETS[@]}"; do
+        IFS='|' read -r name url path <<<"$entry"
+        [[ -e "$path" ]] || missing+=("$name")
+      done
+      ((${#missing[@]} == 0)) && { ok "Todos os assets instalados"; return; }
+      warn "Ainda não encontrei: ${missing[*]}"
+      ask "Continuar mesmo assim? [s/N]" && return
+    else
+      warn "Opção inválida: $choice"
+    fi
   done
 }
 
@@ -580,6 +614,6 @@ step_layout() {
 
 pgrep -x plasmashell >/dev/null || die "Rode dentro de uma sessão Plasma em execução."
 
+step_font
 step_assets
-step_confirm
 step_layout
