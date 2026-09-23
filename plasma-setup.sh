@@ -3,8 +3,8 @@
 #
 # Fluxo:
 #   1) instala a fonte, se faltar (via gerenciador de pacotes, pede sudo)
-#   2) abre os assets da KDE Store no Discover para instalação manual e
-#      espera a confirmação, verificando se foram instalados
+#   2) abre a janela "Obter novos..." do KDE para instalar os assets da
+#      KDE Store manualmente e espera a confirmação, verificando a instalação
 #   3) aplica tema, KWin (KZones) e recria painéis/widgets
 #
 # Requer uma sessão Plasma 6 em execução. Faz backup das configs antes.
@@ -12,13 +12,15 @@ set -euo pipefail
 
 # ============================================================== DEFINIÇÕES ===
 
-# Nome | link do Discover | caminho instalado (para verificação)
+# Nome (para buscar na loja) | arquivo .knsrc (tipo de item) | caminho instalado
+# Instalados pela janela "Obter novos..." do KDE: ficam no registro do
+# KNewStuff e recebem atualizações pelo Discover.
 ASSETS=(
-  "Advanced Modern Clock|kns://plasmoids.knsrc/2344806|$HOME/.local/share/plasma/plasmoids/com.github.vKaras1337.modernclock"
-  "Panel Colorizer|kns://plasmoids.knsrc/2130967|$HOME/.local/share/plasma/plasmoids/luisbocanegra.panel.colorizer"
-  "Ars Dark Icons|kns://icons.knsrc/2192428|$HOME/.local/share/icons/Ars-Dark-Icons"
-  "Ars Light Icons|kns://icons.knsrc/2192424|$HOME/.local/share/icons/Ars-Light-Icons"
-  "KZones|kns://kwinscripts.knsrc/1909220|$HOME/.local/share/kwin/scripts/kzones"
+  "Advanced Modern Clock|plasmoids.knsrc|$HOME/.local/share/plasma/plasmoids/com.github.vKaras1337.modernclock"
+  "Panel Colorizer|plasmoids.knsrc|$HOME/.local/share/plasma/plasmoids/luisbocanegra.panel.colorizer"
+  "Ars Dark Icons|icons.knsrc|$HOME/.local/share/icons/Ars-Dark-Icons"
+  "Ars Light Icons|icons.knsrc|$HOME/.local/share/icons/Ars-Light-Icons"
+  "KZones|kwinscripts.knsrc|$HOME/.local/share/kwin/scripts/kzones"
 )
 
 LOOK_AND_FEEL="org.kde.breezedark.desktop"
@@ -368,43 +370,65 @@ step_font() {
 
 # ========================================================= 2) ASSETS =========
 
-open_in_discover() {
-  info "Abrindo $1 no Discover..."
-  plasma-discover "$2" >/dev/null 2>&1 &
+# Nome do tipo de item no idioma do usuário (ex.: "Widgets do Plasma")
+knsrc_label() {
+  local file="/usr/share/knsrcfiles/$1" lang="${LANG%%.*}" label
+  label="$(grep -m1 "^Name\[$lang\]=" "$file" 2>/dev/null ||
+           grep -m1 "^Name\[${lang%%_*}\]=" "$file" 2>/dev/null ||
+           grep -m1 '^Name=' "$file" 2>/dev/null || true)"
+  echo "${label#*=}"
+}
+
+# O KNewStuff 6 não abre um item pelo ID (kns://), então abre a janela do
+# tipo certo e o usuário busca pelo nome
+open_store() {
+  info "Abrindo \"$(knsrc_label "$1")\" — busque por: $2"
+  knewstuff-dialog6 "$1" >/dev/null 2>&1 &
   disown
 }
 
 step_assets() {
   bold "━━ 2/3 — Assets da KDE Store"
-  echo "Abra cada item no Discover e clique em Instalar."
-  local entry name url path choice missing i
+  echo "Para cada item, abra a janela, busque pelo nome e clique em Instalar."
+  local entry name knsrc path choice missing i opened names e n k p
   while true; do
     echo
     i=0
     for entry in "${ASSETS[@]}"; do
       i=$((i + 1))
-      IFS='|' read -r name url path <<<"$entry"
+      IFS='|' read -r name knsrc path <<<"$entry"
       if [[ -e "$path" ]]; then
-        printf '  %d) \e[32m✔\e[0m %-22s %s\n' "$i" "$name" "$url"
+        printf '  %d) \e[32m✔\e[0m %-22s (%s)\n' "$i" "$name" "$(knsrc_label "$knsrc")"
       else
-        printf '  %d) \e[33m•\e[0m %-22s %s\n' "$i" "$name" "$url"
+        printf '  %d) \e[33m•\e[0m %-22s (%s)\n' "$i" "$name" "$(knsrc_label "$knsrc")"
       fi
     done
     echo
-    read -rp "Número para abrir no Discover, [t] todos os pendentes, [Enter] quando terminar: " choice
+    read -rp "Número para abrir, [t] todos os pendentes, [Enter] quando terminar: " choice
 
     if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#ASSETS[@]})); then
-      IFS='|' read -r name url path <<<"${ASSETS[choice - 1]}"
-      open_in_discover "$name" "$url"
+      IFS='|' read -r name knsrc path <<<"${ASSETS[choice - 1]}"
+      open_store "$knsrc" "$name"
     elif [[ "$choice" =~ ^[tT]$ ]]; then
+      # Uma janela por tipo, listando os nomes pendentes daquele tipo
+      opened=" "
       for entry in "${ASSETS[@]}"; do
-        IFS='|' read -r name url path <<<"$entry"
-        [[ -e "$path" ]] || { open_in_discover "$name" "$url"; sleep 2; }
+        IFS='|' read -r name knsrc path <<<"$entry"
+        [[ -e "$path" || "$opened" == *" $knsrc "* ]] && continue
+        names=""
+        for e in "${ASSETS[@]}"; do
+          IFS='|' read -r n k p <<<"$e"
+          [[ "$k" == "$knsrc" && ! -e "$p" ]] && names+="${names:+, }$n"
+        done
+        open_store "$knsrc" "$names"
+        opened+="$knsrc "
+        sleep 1
       done
+      [[ "$opened" == " " ]] && ok "Nada pendente"
     elif [[ -z "$choice" ]]; then
       missing=()
       for entry in "${ASSETS[@]}"; do
-        IFS='|' read -r name url path <<<"$entry"
+        IFS='|' read -r name knsrc path <<<"$entry"
         [[ -e "$path" ]] || missing+=("$name")
       done
       ((${#missing[@]} == 0)) && { ok "Todos os assets instalados"; return; }
