@@ -404,7 +404,7 @@ step_assets() {
       fi
     done
     echo
-    read -rp "Número para abrir, [t] todos os pendentes, [Enter] quando terminar: " choice
+    read -rp "Número para abrir, [t] todos os pendentes, [Enter] verificar, [q] sair: " choice
 
     if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#ASSETS[@]})); then
       IFS='|' read -r name knsrc path <<<"${ASSETS[choice - 1]}"
@@ -433,7 +433,9 @@ step_assets() {
       done
       ((${#missing[@]} == 0)) && { ok "Todos os assets instalados"; return; }
       warn "Ainda não encontrei: ${missing[*]}"
-      ask "Continuar mesmo assim? [s/N]" && return
+      warn "O layout só é aplicado depois que todos estiverem instalados."
+    elif [[ "$choice" =~ ^[qQ]$ ]]; then
+      die "Cancelado — nenhuma configuração foi alterada."
     else
       warn "Opção inválida: $choice"
     fi
@@ -552,8 +554,16 @@ var desk = desktopsForActivity(currentActivity()).filter(function (d) { return d
 var g = screenGeometry(desk.screen);
 var W = g.width, H = g.height, third = Math.floor(W / 3);
 
+// Posições gravadas depois em ItemGeometries (o addWidget sozinho não fixa)
+var placed = [];
+function place(plugin, x, y, w, h) {
+  var widget = desk.addWidget(plugin, x, y, w, h);
+  placed.push("Applet-" + widget.id + ":" + x + "," + y + "," + w + "," + h + ",0;");
+  return widget;
+}
+
 function monitor(x, y, w, h, face, sensors, colors, labels) {
-  var m = desk.addWidget("org.kde.plasma.systemmonitor", x, y, w, h);
+  var m = place("org.kde.plasma.systemmonitor", x, y, w, h);
   cfg(m, [], { CurrentPreset: "org.kde.plasma.systemmonitor", UserBackgroundHints: "ShadowBackground" });
   cfg(m, ["Appearance"], { chartFace: face, showTitle: false, title: "" });
   cfg(m, ["Sensors"], { highPrioritySensorIds: JSON.stringify(sensors) });
@@ -579,28 +589,33 @@ monitor(0, 0, W, 64, "org.kde.ksysguard.textonly",
     "power/battery_BAT1/chargeRate": "Charging Rate" });
 
 // Relógio grande
-desk.addWidget("com.github.vKaras1337.modernclock", 0, 64, W, 160);
+place("com.github.vKaras1337.modernclock", 0, 64, W, 160);
 
 // Gráficos na base: CPU/GPU | Rede | Disco
-var y = H - 120;
-monitor(0, y, third, 112, "org.kde.ksysguard.linechart",
+var y = H - 104;
+monitor(0, y, third, 96, "org.kde.ksysguard.linechart",
   ["cpu/all/system", "gpu/gpu1/usage"],
   { "cpu/all/system": "0,170,255", "gpu/gpu1/usage": "255,85,0" },
   { "gpu/gpu1/usage": "GPU" });
-monitor(third, y, third, 112, "org.kde.ksysguard.linechart",
+monitor(third, y, third, 96, "org.kde.ksysguard.linechart",
   ["network/all/download", "network/all/upload"],
   { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
   { "network/all/download": "Download", "network/all/upload": "Upload" });
-monitor(2 * third, y, third, 112, "org.kde.ksysguard.linechart",
+monitor(2 * third, y, third, 96, "org.kde.ksysguard.linechart",
   ["disk/all/write", "disk/all/read"],
   { "disk/all/read": "255,85,0", "disk/all/write": "0,170,255" },
   { "disk/all/read": "Read", "disk/all/write": "Write" });
+
+print("DESK " + desk.id + " " + W + "x" + H + " " + placed.join("") + "\n");
 JS
 )
   js="${js//@WALLPAPER@/$WALLPAPER}"
   js="${js//@LAUNCHERS@/$TASK_LAUNCHERS}"
   js="${js//@COLORIZER@/$colorizer}"
-  plasma_js "$js" >/dev/null || die "Falha ao aplicar o layout do Plasma"
+  local out
+  out="$(plasma_js "$js")" || die "Falha ao aplicar o layout do Plasma"
+  read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out")
+  [[ -n "${DESK_GEOM:-}" ]] || die "O Plasma não devolveu as posições dos widgets: $out"
 
   # A bandeja cria o próprio containment de forma assíncrona: configura depois
   sleep 2
@@ -619,6 +634,70 @@ JS
   ok "Painéis e widgets criados"
 }
 
+stop_plasmashell() {
+  systemctl --user stop plasma-plasmashell.service 2>/dev/null || kquitapp6 plasmashell >/dev/null 2>&1 || true
+  local _
+  for _ in {1..30}; do pgrep -x plasmashell >/dev/null || return 0; sleep 0.5; done
+  die "plasmashell não encerrou"
+}
+
+start_plasmashell() {
+  systemctl --user start plasma-plasmashell.service 2>/dev/null || (kstart plasmashell >/dev/null 2>&1 &)
+  local _
+  for _ in {1..60}; do
+    plasma_js 'print("ok")' 2>/dev/null | grep -q ok && { sleep 3; return 0; }
+    sleep 0.5
+  done
+  die "plasmashell não iniciou"
+}
+
+# Grava as posições dos widgets com o plasmashell parado (senão ele sobrescreve)
+write_geometry() {
+  local key
+  for key in "ItemGeometries-$DESK_RES" ItemGeometriesHorizontal; do
+    kwriteconfig6 --file plasma-org.kde.plasma.desktop-appletsrc \
+      --group Containments --group "$DESK_ID" --key "$key" "$DESK_GEOM"
+  done
+}
+
+# Confere painéis, widgets e posições; imprime o que estiver errado
+verify_layout() {
+  local errors=() out saved
+  out="$(plasma_js '
+    panels().forEach(function (p) { print("PANEL " + p.location + " " + p.widgets().map(function (w) { return w.type; }).join(",") + "\n"); });
+    var d = desktopById('"$DESK_ID"');
+    if (d) print("DESKW " + d.widgets().map(function (w) { return w.type; }).join(",") + "\n");
+  ')"
+  grep -q '^PANEL top .*org.kde.plasma.systemtray' <<<"$out" || errors+=("painel superior ausente ou sem bandeja")
+  grep -q '^PANEL left .*org.kde.plasma.icontasks' <<<"$out" || errors+=("painel lateral ausente ou sem tarefas")
+  local deskw; deskw="$(grep '^DESKW ' <<<"$out" || true)"
+  [[ "$(grep -o 'org.kde.plasma.systemmonitor' <<<"$deskw" | wc -l)" -eq 4 ]] || errors+=("esperava 4 monitores do sistema na área de trabalho")
+  grep -q 'com.github.vKaras1337.modernclock' <<<"$deskw" || errors+=("relógio da área de trabalho ausente")
+
+  saved="$(kreadconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$DESK_ID" --key "ItemGeometries-$DESK_RES")"
+  local bad
+  bad="$(python3 - "$DESK_GEOM" "$saved" <<'PY2'
+import sys
+def parse(s):
+    r = {}
+    for item in filter(None, s.split(";")):
+        k, v = item.split(":")
+        r[k] = [float(x) for x in v.split(",")[:4]]
+    return r
+want, got = parse(sys.argv[1]), parse(sys.argv[2])
+for k, v in want.items():
+    g = got.get(k)
+    if g is None or any(abs(a - b) > 2 for a, b in zip(v, g)):
+        print(f"{k}: esperado {v}, atual {g}")
+PY2
+)"
+  [[ -z "$bad" ]] || errors+=("posição errada — $bad")
+
+  ((${#errors[@]} == 0)) && return 0
+  local e; for e in "${errors[@]}"; do warn "$e"; done
+  return 1
+}
+
 step_layout() {
   bold "━━ 3/3 — Aplicando layout"
   backup_configs
@@ -626,12 +705,20 @@ step_layout() {
   apply_kwin
   apply_layout
 
-  info "Reiniciando plasmashell"
-  systemctl --user restart plasma-plasmashell.service 2>/dev/null ||
-    { kquitapp6 plasmashell >/dev/null 2>&1 || true; (kstart plasmashell >/dev/null 2>&1 &); }
-
-  echo
-  ok "Pronto! Faça logout/login para que fontes e cores entrem em vigor em todos os apps."
+  local attempt
+  for attempt in 1 2 3; do
+    info "Fixando posições dos widgets e reiniciando o plasmashell (tentativa $attempt/3)"
+    stop_plasmashell
+    write_geometry
+    start_plasmashell
+    if verify_layout; then
+      ok "Layout verificado: painéis, widgets e posições corretos"
+      echo
+      ok "Pronto! Faça logout/login para que fontes e cores entrem em vigor em todos os apps."
+      return
+    fi
+  done
+  die "O layout não ficou como esperado após 3 tentativas (backup das configs acima)."
 }
 
 # =================================================================== MAIN ====
