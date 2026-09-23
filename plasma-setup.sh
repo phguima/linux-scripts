@@ -1,0 +1,585 @@
+#!/usr/bin/env bash
+# plasma-setup.sh — aplica o layout do KDE Plasma definido neste arquivo.
+#
+# Fluxo:
+#   1) mostra os assets da KDE Store para instalar manualmente pelo Discover
+#   2) espera a confirmação e verifica se foram instalados
+#   3) aplica tema, KWin (KZones) e recria painéis/widgets
+#
+# Requer uma sessão Plasma 6 em execução. Faz backup das configs antes.
+set -euo pipefail
+
+# ============================================================== DEFINIÇÕES ===
+
+# Nome | link do Discover | caminho instalado (para verificação)
+ASSETS=(
+  "Advanced Modern Clock|kns://plasmoids.knsrc/2344806|$HOME/.local/share/plasma/plasmoids/com.github.vKaras1337.modernclock"
+  "Panel Colorizer|kns://plasmoids.knsrc/2130967|$HOME/.local/share/plasma/plasmoids/luisbocanegra.panel.colorizer"
+  "Ars Dark Icons|kns://icons.knsrc/2192428|$HOME/.local/share/icons/Ars-Dark-Icons"
+  "Ars Light Icons|kns://icons.knsrc/2192424|$HOME/.local/share/icons/Ars-Light-Icons"
+  "KZones|kns://kwinscripts.knsrc/1909220|$HOME/.local/share/kwin/scripts/kzones"
+)
+
+LOOK_AND_FEEL="org.kde.breezedark.desktop"
+ICON_THEME="Ars-Dark-Icons"
+FONT_FAMILY="Roboto Medium"          # Fedora: sudo dnf install google-roboto-fonts
+
+# Aplicado só se existir na pasta de imagens do usuário (~/Pictures)
+PICTURES_DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")"
+WALLPAPER="$PICTURES_DIR/wallpapers/wallpaper_16.jpeg"
+
+VIRTUAL_DESKTOPS=4
+VIRTUAL_DESKTOP_ROWS=2
+
+TASK_LAUNCHERS="applications:systemsettings.desktop,applications:brave-origin.desktop,applications:brave-browser.desktop,applications:org.kde.konsole.desktop,preferred://filemanager,applications:com.microsoft.VSCode.desktop,applications:com.spotify.Client.desktop,applications:org.kde.discover.desktop"
+
+TRAY_ITEMS="org.kde.kdeconnect,org.kde.plasma.vault,org.kde.kscreen,org.kde.plasma.battery,org.kde.plasma.bluetooth,org.kde.plasma.brightness,org.kde.plasma.cameraindicator,org.kde.plasma.clipboard,org.kde.plasma.devicenotifier,org.kde.plasma.keyboardindicator,org.kde.plasma.keyboardlayout,org.kde.plasma.manage-inputmethod,org.kde.plasma.mediacontroller,org.kde.plasma.networkmanagement,org.kde.plasma.notifications,org.kde.plasma.printmanager,org.kde.plasma.volume,org.kde.plasma.weather"
+
+PANEL_COLORIZER_PRESET="Transparent"
+
+KZONES_LAYOUTS=$(cat <<'JSON'
+[
+    {
+        "name": "Priority Grid",
+        "padding": 0,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 25
+            },
+            {
+                "x": 25,
+                "y": 0,
+                "height": 100,
+                "width": 50
+            },
+            {
+                "x": 75,
+                "y": 0,
+                "height": 100,
+                "width": 25
+            }
+        ]
+    },
+    {
+        "name": "Quadrant Grid",
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 50,
+                "width": 50
+            },
+            {
+                "x": 0,
+                "y": 50,
+                "height": 50,
+                "width": 50
+            },
+            {
+                "x": 50,
+                "y": 50,
+                "height": 50,
+                "width": 50
+            },
+            {
+                "x": 50,
+                "y": 0,
+                "height": 50,
+                "width": 50
+            }
+        ]
+    },
+    {
+        "name": "Double Grid",
+        "padding": 5,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 50
+            },
+            {
+                "x": 50,
+                "y": 0,
+                "height": 100,
+                "width": 50
+            }
+        ]
+    },
+    {
+        "name": "Triple Grid Left",
+        "padding": 5,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 50
+            },
+            {
+                "x": 50,
+                "y": 0,
+                "height": 50,
+                "width": 50
+            },
+            {
+                "x": 50,
+                "y": 50,
+                "height": 50,
+                "width": 50
+            }
+        ]
+    },
+    {
+        "name": "Triple Grid Rigth",
+        "padding": 5,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 50,
+                "width": 50
+            },
+            {
+                "x": 0,
+                "y": 50,
+                "height": 50,
+                "width": 50
+            },
+            {
+                "x": 50,
+                "y": 0,
+                "height": 100,
+                "width": 50
+            }
+        ]
+    },
+    {
+        "name": "Bigger Grid",
+        "padding": 17,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 1
+            },
+            {
+                "x": 1,
+                "y": 0,
+                "height": 100,
+                "width": 98
+            },
+            {
+                "x": 99,
+                "y": 0,
+                "height": 100,
+                "width": 1
+            }
+        ]
+    },
+    {
+        "name": "Big Grid",
+        "padding": 25,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 2
+            },
+            {
+                "x": 2,
+                "y": 0,
+                "height": 100,
+                "width": 96
+            },
+            {
+                "x": 98,
+                "y": 0,
+                "height": 100,
+                "width": 2
+            }
+        ]
+    },
+    {
+        "name": "Social Grid",
+        "padding": 20,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 15
+            },
+            {
+                "x": 15,
+                "y": 0,
+                "height": 100,
+                "width": 70
+            },
+            {
+                "x": 85,
+                "y": 0,
+                "height": 100,
+                "width": 15
+            }
+        ]
+    },
+    {
+        "name": "Konsole Grid",
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 7,
+                "width": 100
+            },
+            {
+                "x": 0,
+                "y": 7,
+                "height": 86,
+                "width": 20
+            },
+            {
+                "x": 0,
+                "y": 93,
+                "height": 7,
+                "width": 100
+            },
+            {
+                "x": 20,
+                "y": 7,
+                "height": 86,
+                "width": 60
+            },
+            {
+                "x": 80,
+                "y": 7,
+                "height": 86,
+                "width": 20
+            }
+        ]
+    },
+    {
+        "name": "Sixty Grid",
+        "padding": 5,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 60
+            },
+            {
+                "x": 60,
+                "y": 0,
+                "height": 100,
+                "width": 40
+            }
+        ]
+    },
+    {
+        "name": "Seventy Grid",
+        "padding": 5,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 70
+            },
+            {
+                "x": 70,
+                "y": 0,
+                "height": 100,
+                "width": 30
+            }
+        ]
+    },
+    {
+        "name": "Dolphin Grid",
+        "padding": 20,
+        "zones": [
+            {
+                "x": 0,
+                "y": 0,
+                "height": 100,
+                "width": 40
+            },
+            {
+                "x": 40,
+                "y": 0,
+                "height": 10,
+                "width": 60
+            },
+            {
+                "x": 40,
+                "y": 10,
+                "height": 90,
+                "width": 60
+            }
+        ]
+    }
+]
+JSON
+)
+
+# ================================================================ HELPERS ====
+
+bold() { printf '\n\e[1m%s\e[0m\n' "$*"; }
+info() { printf '\e[36m::\e[0m %s\n' "$*"; }
+ok()   { printf '\e[32m✔\e[0m %s\n' "$*"; }
+warn() { printf '\e[33m!\e[0m %s\n' "$*"; }
+die()  { printf '\e[31m✘\e[0m %s\n' "$*" >&2; exit 1; }
+ask()  { local a; read -rp "$1 " a; [[ "$a" =~ ^[sS] ]]; }
+
+# Link clicável no terminal (OSC 8); \e\\ é o terminador da sequência
+# shellcheck disable=SC1003
+link() { printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$1" "$1"; }
+
+qdbus() { if command -v qdbus-qt6 >/dev/null; then qdbus-qt6 "$@"; else qdbus6 "$@"; fi; }
+plasma_js() { qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1"; }
+
+# ========================================================= 1) ASSETS =========
+
+step_assets() {
+  bold "━━ 1/3 — Instale os assets pelo Discover"
+  echo "Abra cada link (Ctrl+clique no Konsole) e clique em Instalar:"
+  echo
+  local entry name url path
+  for entry in "${ASSETS[@]}"; do
+    IFS='|' read -r name url path <<<"$entry"
+    if [[ -e "$path" ]]; then
+      printf '  \e[32m✔\e[0m %-22s %s\n' "$name" "$(link "$url")"
+    else
+      printf '  \e[33m•\e[0m %-22s %s\n' "$name" "$(link "$url")"
+    fi
+  done
+  fc-list : family | grep -qiF "$FONT_FAMILY" ||
+    warn "Fonte '$FONT_FAMILY' não encontrada (Fedora: sudo dnf install google-roboto-fonts)"
+}
+
+# ===================================================== 2) CONFIRMAÇÃO ========
+
+step_confirm() {
+  bold "━━ 2/3 — Confirmação"
+  local entry name url path missing
+  while true; do
+    until ask "Terminou de instalar tudo? [s/N]"; do :; done
+    missing=()
+    for entry in "${ASSETS[@]}"; do
+      IFS='|' read -r name url path <<<"$entry"
+      [[ -e "$path" ]] || missing+=("$name")
+    done
+    ((${#missing[@]} == 0)) && { ok "Todos os assets instalados"; return; }
+    warn "Ainda não encontrei: ${missing[*]}"
+    ask "Continuar mesmo assim? [s/N]" && return
+  done
+}
+
+# ========================================================= 3) LAYOUT =========
+
+backup_configs() {
+  local dir
+  dir="$HOME/.config/plasma-setup-backup-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$dir"
+  local f
+  for f in plasma-org.kde.plasma.desktop-appletsrc plasmashellrc kdeglobals kwinrc kscreenlockerrc; do
+    [[ -f "$HOME/.config/$f" ]] && cp -a "$HOME/.config/$f" "$dir/"
+  done
+  ok "Backup das configs atuais em $dir"
+}
+
+apply_theme() {
+  info "Tema global: $LOOK_AND_FEEL"
+  plasma-apply-lookandfeel --apply "$LOOK_AND_FEEL" >/dev/null 2>&1 || warn "Falha ao aplicar $LOOK_AND_FEEL"
+
+  info "Ícones: $ICON_THEME"
+  /usr/libexec/plasma-changeicons "$ICON_THEME" >/dev/null 2>&1 || warn "Tema de ícones $ICON_THEME não encontrado"
+
+  info "Fontes: $FONT_FAMILY"
+  local k
+  for k in font:10 menuFont:10 toolBarFont:9 smallestReadableFont:8; do
+    kwriteconfig6 --file kdeglobals --group General --key "${k%%:*}" "$FONT_FAMILY,${k##*:},-1,5,400,0,0,0,0,0,0,0,0,0,0,1,,0,0"
+  done
+  kwriteconfig6 --file kdeglobals --group WM --key activeFont "$FONT_FAMILY,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1,,0,0"
+  kwriteconfig6 --file kdeglobals --group General --key XftAntialias true
+  kwriteconfig6 --file kdeglobals --group General --key XftHintStyle hintslight
+  kwriteconfig6 --file kdeglobals --group General --key XftSubPixel none
+
+  if [[ -f "$WALLPAPER" ]]; then
+    info "Wallpaper: $WALLPAPER"
+    kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key Image "file://$WALLPAPER"
+    kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key PreviewImage "file://$WALLPAPER"
+  else
+    warn "Wallpaper não encontrado em $WALLPAPER — pulando (papel de parede atual mantido)"
+    WALLPAPER=""
+  fi
+  ok "Tema aplicado"
+}
+
+apply_kwin() {
+  info "KWin: $VIRTUAL_DESKTOPS áreas de trabalho em $VIRTUAL_DESKTOP_ROWS linhas + KZones"
+  kwriteconfig6 --file kwinrc --group Desktops --key Number "$VIRTUAL_DESKTOPS"
+  kwriteconfig6 --file kwinrc --group Desktops --key Rows "$VIRTUAL_DESKTOP_ROWS"
+  kwriteconfig6 --file kwinrc --group Plugins --key kzonesEnabled true
+  kwriteconfig6 --file kwinrc --group Script-kzones --key layoutsJson "$KZONES_LAYOUTS"
+  qdbus org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+  ok "KWin configurado"
+}
+
+apply_layout() {
+  info "Recriando painéis e widgets"
+
+  # Preset do Panel Colorizer vem do próprio plasmoid instalado
+  local preset="$HOME/.local/share/plasma/plasmoids/luisbocanegra.panel.colorizer/contents/ui/presets/$PANEL_COLORIZER_PRESET/settings.json"
+  local colorizer="null"
+  [[ -f "$preset" ]] && colorizer="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["globalSettings"]))' "$preset")"
+
+  local js
+  js=$(cat <<'JS'
+var WALLPAPER = "@WALLPAPER@";
+var LAUNCHERS = "@LAUNCHERS@";
+var COLORIZER = @COLORIZER@;
+
+function cfg(w, group, values) {
+  w.currentConfigGroup = group;
+  for (var k in values) w.writeConfig(k, values[k]);
+}
+
+// Limpa o layout atual
+panels().forEach(function (p) { p.remove(); });
+desktops().forEach(function (d) {
+  d.widgets().forEach(function (w) { w.remove(); });
+  if (WALLPAPER) {
+    d.wallpaperPlugin = "org.kde.image";
+    cfg(d, ["Wallpaper", "org.kde.image", "General"], { Image: "file://" + WALLPAPER });
+  }
+});
+
+// ── Painel superior: bandeja, relógio, pager ──
+var top = new Panel;
+top.location = "top";
+top.height = 34;
+top.floating = true;
+top.lengthMode = "fit";
+top.hiding = "autohide";
+top.addWidget("org.kde.plasma.marginsseparator");
+top.addWidget("org.kde.plasma.pager");
+top.addWidget("org.kde.plasma.systemtray");
+cfg(top.addWidget("org.kde.plasma.digitalclock"), ["Appearance"], { fontWeight: 400 });
+top.addWidget("org.kde.plasma.showdesktop");
+
+// ── Painel lateral esquerdo: menu, tarefas, Panel Colorizer ──
+var left = new Panel;
+left.location = "left";
+left.height = 52;
+left.floating = true;
+left.lengthMode = "fit";
+left.hiding = "autohide";
+left.addWidget("org.kde.plasma.kickerdash");
+cfg(left.addWidget("org.kde.plasma.icontasks"), ["General"], { launchers: LAUNCHERS });
+var colorizer = left.addWidget("luisbocanegra.panel.colorizer");
+var colorizerCfg = { hideWidget: true, configurationOverrides: '{"overrides":{},"associations":[]}' };
+if (COLORIZER) colorizerCfg.globalSettings = JSON.stringify(COLORIZER);
+cfg(colorizer, ["General"], colorizerCfg);
+
+// ── Widgets da área de trabalho (tela principal) ──
+var desk = desktopsForActivity(currentActivity()).filter(function (d) { return d.screen === 0; })[0] || desktops()[0];
+var g = screenGeometry(desk.screen);
+var W = g.width, H = g.height, third = Math.floor(W / 3);
+
+function monitor(x, y, w, h, face, sensors, colors, labels) {
+  var m = desk.addWidget("org.kde.plasma.systemmonitor", x, y, w, h);
+  cfg(m, [], { CurrentPreset: "org.kde.plasma.systemmonitor", UserBackgroundHints: "ShadowBackground" });
+  cfg(m, ["Appearance"], { chartFace: face, showTitle: false, title: "" });
+  cfg(m, ["Sensors"], { highPrioritySensorIds: JSON.stringify(sensors) });
+  cfg(m, ["SensorColors"], colors);
+  cfg(m, ["SensorLabels"], labels);
+  if (face === "org.kde.ksysguard.linechart")
+    cfg(m, ["org.kde.ksysguard.linechart", "General"], { showGridLines: false, showYAxisLabels: false });
+}
+
+// Faixa de informações do sistema (topo)
+monitor(0, 0, W, 64, "org.kde.ksysguard.textonly",
+  ["os/system/uptime", "cpu/all/averageTemperature", "os/kernel/prettyName", "os/plasma/plasmaVersion",
+   "disk/all/usedPercent", "memory/physical/used", "memory/swap/used",
+   "power/battery_BAT1/chargeRate", "power/battery_BAT1/chargePercentage"],
+  { "cpu/all/averageTemperature": "255,85,0", "disk/all/usedPercent": "85,255,255",
+    "memory/physical/used": "255,170,255", "memory/swap/used": "0,170,255",
+    "os/kernel/prettyName": "85,255,127", "os/plasma/plasmaVersion": "255,255,127",
+    "os/system/uptime": "0,170,255", "power/battery_BAT1/chargePercentage": "85,255,127",
+    "power/battery_BAT1/chargeRate": "255,85,0" },
+  { "cpu/all/averageTemperature": "CPU Temperature", "disk/all/usedPercent": "Disk Usage",
+    "memory/physical/used": "Used Memory", "memory/swap/used": "Used Swap",
+    "os/plasma/plasmaVersion": "KDE Plasma", "power/battery_BAT1/chargePercentage": "Charge Percentage",
+    "power/battery_BAT1/chargeRate": "Charging Rate" });
+
+// Relógio grande
+desk.addWidget("com.github.vKaras1337.modernclock", 0, 64, W, 160);
+
+// Gráficos na base: CPU/GPU | Rede | Disco
+var y = H - 120;
+monitor(0, y, third, 112, "org.kde.ksysguard.linechart",
+  ["cpu/all/system", "gpu/gpu1/usage"],
+  { "cpu/all/system": "0,170,255", "gpu/gpu1/usage": "255,85,0" },
+  { "gpu/gpu1/usage": "GPU" });
+monitor(third, y, third, 112, "org.kde.ksysguard.linechart",
+  ["network/all/download", "network/all/upload"],
+  { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
+  { "network/all/download": "Download", "network/all/upload": "Upload" });
+monitor(2 * third, y, third, 112, "org.kde.ksysguard.linechart",
+  ["disk/all/write", "disk/all/read"],
+  { "disk/all/read": "255,85,0", "disk/all/write": "0,170,255" },
+  { "disk/all/read": "Read", "disk/all/write": "Write" });
+JS
+)
+  js="${js//@WALLPAPER@/$WALLPAPER}"
+  js="${js//@LAUNCHERS@/$TASK_LAUNCHERS}"
+  js="${js//@COLORIZER@/$colorizer}"
+  plasma_js "$js" >/dev/null || die "Falha ao aplicar o layout do Plasma"
+
+  # A bandeja cria o próprio containment de forma assíncrona: configura depois
+  sleep 2
+  plasma_js "$(cat <<JS
+panels().forEach(function (p) {
+  p.widgets("org.kde.plasma.systemtray").forEach(function (t) {
+    var tray = desktopById(t.readConfig("SystrayContainmentId"));
+    if (!tray) return;
+    tray.currentConfigGroup = ["General"];
+    tray.writeConfig("extraItems", "$TRAY_ITEMS");
+    tray.writeConfig("knownItems", "$TRAY_ITEMS");
+  });
+});
+JS
+)" >/dev/null || warn "Não consegui configurar os itens da bandeja"
+  ok "Painéis e widgets criados"
+}
+
+step_layout() {
+  bold "━━ 3/3 — Aplicando layout"
+  backup_configs
+  apply_theme
+  apply_kwin
+  apply_layout
+
+  info "Reiniciando plasmashell"
+  systemctl --user restart plasma-plasmashell.service 2>/dev/null ||
+    { kquitapp6 plasmashell >/dev/null 2>&1 || true; (kstart plasmashell >/dev/null 2>&1 &); }
+
+  echo
+  ok "Pronto! Faça logout/login para que fontes e cores entrem em vigor em todos os apps."
+}
+
+# =================================================================== MAIN ====
+
+pgrep -x plasmashell >/dev/null || die "Rode dentro de uma sessão Plasma em execução."
+
+step_assets
+step_confirm
+step_layout
