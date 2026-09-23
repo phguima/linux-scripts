@@ -570,7 +570,12 @@ cfg(colorizer, ["General"], colorizerCfg);
 // ── Widgets da área de trabalho (tela principal) ──
 var desk = desktopsForActivity(currentActivity()).filter(function (d) { return d.screen === 0; })[0] || desktops()[0];
 var g = screenGeometry(desk.screen);
-var W = g.width, H = g.height, third = Math.floor(W / 3);
+var W = g.width, H = g.height;
+// A área de trabalho encaixa tamanhos numa grade de 16px: calcula já nela.
+// Os três gráficos inferiores têm a mesma largura; a sobra (< 48px) é
+// dividida nas bordas, mantendo o grupo centralizado
+var FW = Math.floor(W / 16) * 16, third = Math.floor(FW / 3 / 16) * 16;
+var left = Math.floor((FW - 3 * third) / 2 / 16) * 16;
 
 // Posições gravadas depois em ItemGeometries (o addWidget sozinho não fixa)
 var placed = [];
@@ -608,10 +613,10 @@ if (BATTERY) {
   infoLabels[BATTERY + "/chargeRate"] = "Charging Rate";
   infoLabels[BATTERY + "/chargePercentage"] = "Charge Percentage";
 }
-monitor(0, 0, W, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, infoLabels);
+monitor(0, 0, FW, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, infoLabels);
 
 // Relógio grande
-place("com.github.vKaras1337.modernclock", 0, 64, W, 160);
+place("com.github.vKaras1337.modernclock", 0, 64, FW, 160);
 
 // Gráficos na base: CPU/GPU | Rede | Disco
 // Altura mínima em que os três cabem iguais: 112px medidos com gridUnit 18
@@ -619,15 +624,15 @@ place("com.github.vKaras1337.modernclock", 0, 64, W, 160);
 // e arredonda para a grade de 16px da área de trabalho
 var BOTTOM_H = Math.ceil(112 * gridUnit / 18 / 16) * 16, y = H - BOTTOM_H - 8;
 // CPU + uso agregado de todas as GPUs (só se a máquina tiver sensor de GPU)
-monitor(0, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
+monitor(left, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   HAS_GPU ? ["cpu/all/usage", "gpu/all/usage"] : ["cpu/all/usage"],
   { "cpu/all/usage": "0,170,255", "gpu/all/usage": "255,85,0" },
   { "cpu/all/usage": "CPU", "gpu/all/usage": "GPUs" });
-monitor(third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
+monitor(left + third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["network/all/download", "network/all/upload"],
   { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
   { "network/all/download": "Download", "network/all/upload": "Upload" });
-monitor(2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
+monitor(left + 2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["disk/all/write", "disk/all/read"],
   { "disk/all/read": "255,85,0", "disk/all/write": "0,170,255" },
   { "disk/all/read": "Read", "disk/all/write": "Write" });
@@ -704,11 +709,13 @@ verify_layout() {
 
   saved="$(kreadconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$DESK_ID" --key "ItemGeometries-$DESK_RES")"
   local bad
-  # O Plasma pode aumentar a altura até o mínimo do widget e ajustar o y para
-  # caber na tela; por isso confere o encaixe, não a coordenada exata:
-  #   x/largura exatos; widgets de cima no topo; os de baixo encostados na
-  #   base e todos com a mesma altura
-  bad="$(python3 - "$DESK_GEOM" "$saved" "${DESK_RES#*x}" <<'PY2'
+  # O Plasma encaixa os widgets numa grade de 16px, pode aumentar a altura até
+  # o mínimo do widget e reescalar posições em outra resolução; por isso confere
+  # a estrutura, com folga de 2 células (32px), e não a coordenada exata:
+  #   topo: começa à esquerda, largura toda, perto do y esperado
+  #   base: da esquerda p/ direita sem sobreposição, cobrindo a largura,
+  #         encostados no rodapé, com a mesma altura e a mesma largura
+  bad="$(python3 - "$DESK_GEOM" "$saved" "${DESK_RES%x*}" "${DESK_RES#*x}" <<'PY2'
 import sys
 def parse(s):
     r = {}
@@ -716,24 +723,38 @@ def parse(s):
         k, v = item.split(":")
         r[k] = [float(x) for x in v.split(",")[:4]]
     return r
-want, got, H = parse(sys.argv[1]), parse(sys.argv[2]), float(sys.argv[3])
-bottom_heights = []
+want, got = parse(sys.argv[1]), parse(sys.argv[2])
+W, H, TOL = float(sys.argv[3]), float(sys.argv[4]), 32
+bottom = []
 for k, (x, y, w, h) in want.items():
     g = got.get(k)
     if g is None:
         print(f"{k}: não encontrado"); continue
     gx, gy, gw, gh = g
-    if abs(gx - x) > 2 or abs(gw - w) > 2:
-        print(f"{k}: horizontal esperado x={x:g} w={w:g}, atual x={gx:g} w={gw:g}")
     if y < H / 2:
+        if gx > TOL or gw < W - TOL:
+            print(f"{k}: deveria ocupar a largura toda, atual x={gx:g} w={gw:g} (tela {W:g})")
         if abs(gy - y) > 48:
             print(f"{k}: deveria estar no topo (y≈{y:g}), atual y={gy:g}")
     else:
-        bottom_heights.append(gh)
+        bottom.append((gx, gw, gy, gh, k))
+        if abs(gx - x) > TOL or abs(gw - w) > TOL:
+            print(f"{k}: esperado x≈{x:g} w≈{w:g}, atual x={gx:g} w={gw:g}")
         if abs((gy + gh) - (y + h)) > 16:
             print(f"{k}: deveria encostar na base ({y + h:g}), atual {gy + gh:g}")
-if bottom_heights and max(bottom_heights) - min(bottom_heights) > 2:
-    print(f"monitores inferiores com alturas diferentes: {bottom_heights}")
+bottom.sort()
+for a, b in zip(bottom, bottom[1:]):
+    if a[0] + a[1] > b[0] + 2:
+        print(f"{a[4]} e {b[4]} estão sobrepostos")
+if bottom:
+    if bottom[0][0] > TOL or bottom[-1][0] + bottom[-1][1] < W - TOL:
+        print(f"monitores inferiores não cobrem a largura (de {bottom[0][0]:g} a {bottom[-1][0] + bottom[-1][1]:g}, tela {W:g})")
+    hs = [b[3] for b in bottom]
+    if max(hs) - min(hs) > 2:
+        print(f"monitores inferiores com alturas diferentes: {hs}")
+    ws = [b[1] for b in bottom]
+    if max(ws) - min(ws) > 2:
+        print(f"monitores inferiores com larguras diferentes: {ws}")
 PY2
 )"
   [[ -z "$bad" ]] || errors+=("posição errada — $bad")
