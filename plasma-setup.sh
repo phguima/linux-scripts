@@ -614,17 +614,19 @@ monitor(0, 0, W, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, info
 place("com.github.vKaras1337.modernclock", 0, 64, W, 160);
 
 // Gráficos na base: CPU/GPU | Rede | Disco
-var y = H - 104;
+// Altura pedida bem pequena: o Plasma aumenta até o mínimo do widget (igual
+// para os três, mesma visualização) e mantém a base encostada no rodapé
+var BOTTOM_H = 32, y = H - BOTTOM_H - 8;
 // CPU + uso agregado de todas as GPUs (só se a máquina tiver sensor de GPU)
-monitor(0, y, third, 96, "org.kde.ksysguard.linechart",
+monitor(0, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   HAS_GPU ? ["cpu/all/usage", "gpu/all/usage"] : ["cpu/all/usage"],
   { "cpu/all/usage": "0,170,255", "gpu/all/usage": "255,85,0" },
   { "cpu/all/usage": "CPU", "gpu/all/usage": "GPUs" });
-monitor(third, y, third, 96, "org.kde.ksysguard.linechart",
+monitor(third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["network/all/download", "network/all/upload"],
   { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
   { "network/all/download": "Download", "network/all/upload": "Upload" });
-monitor(2 * third, y, third, 96, "org.kde.ksysguard.linechart",
+monitor(2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["disk/all/write", "disk/all/read"],
   { "disk/all/read": "255,85,0", "disk/all/write": "0,170,255" },
   { "disk/all/read": "Read", "disk/all/write": "Write" });
@@ -670,7 +672,7 @@ start_plasmashell() {
   systemctl --user start plasma-plasmashell.service 2>/dev/null || (kstart plasmashell >/dev/null 2>&1 &)
   local _
   for _ in {1..60}; do
-    plasma_js 'print("ok")' 2>/dev/null | grep -q ok && { sleep 3; return 0; }
+    plasma_js 'print("ok")' 2>/dev/null | grep ok >/dev/null && { sleep 3; return 0; }
     sleep 0.5
   done
   die "plasmashell não iniciou"
@@ -701,7 +703,11 @@ verify_layout() {
 
   saved="$(kreadconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$DESK_ID" --key "ItemGeometries-$DESK_RES")"
   local bad
-  bad="$(python3 - "$DESK_GEOM" "$saved" <<'PY2'
+  # O Plasma pode aumentar a altura até o mínimo do widget e ajustar o y para
+  # caber na tela; por isso confere o encaixe, não a coordenada exata:
+  #   x/largura exatos; widgets de cima no topo; os de baixo encostados na
+  #   base e todos com a mesma altura
+  bad="$(python3 - "$DESK_GEOM" "$saved" "${DESK_RES#*x}" <<'PY2'
 import sys
 def parse(s):
     r = {}
@@ -709,11 +715,24 @@ def parse(s):
         k, v = item.split(":")
         r[k] = [float(x) for x in v.split(",")[:4]]
     return r
-want, got = parse(sys.argv[1]), parse(sys.argv[2])
-for k, v in want.items():
+want, got, H = parse(sys.argv[1]), parse(sys.argv[2]), float(sys.argv[3])
+bottom_heights = []
+for k, (x, y, w, h) in want.items():
     g = got.get(k)
-    if g is None or any(abs(a - b) > 2 for a, b in zip(v, g)):
-        print(f"{k}: esperado {v}, atual {g}")
+    if g is None:
+        print(f"{k}: não encontrado"); continue
+    gx, gy, gw, gh = g
+    if abs(gx - x) > 2 or abs(gw - w) > 2:
+        print(f"{k}: horizontal esperado x={x:g} w={w:g}, atual x={gx:g} w={gw:g}")
+    if y < H / 2:
+        if abs(gy - y) > 48:
+            print(f"{k}: deveria estar no topo (y≈{y:g}), atual y={gy:g}")
+    else:
+        bottom_heights.append(gh)
+        if abs((gy + gh) - (y + h)) > 16:
+            print(f"{k}: deveria encostar na base ({y + h:g}), atual {gy + gh:g}")
+if bottom_heights and max(bottom_heights) - min(bottom_heights) > 2:
+    print(f"monitores inferiores com alturas diferentes: {bottom_heights}")
 PY2
 )"
   [[ -z "$bad" ]] || errors+=("posição errada — $bad")
