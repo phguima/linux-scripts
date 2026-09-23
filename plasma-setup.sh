@@ -493,6 +493,22 @@ apply_kwin() {
   ok "KWin configurado"
 }
 
+# Sensor da bateria do sistema (BAT0, BAT1...), ignorando periféricos (mouse etc.)
+battery_sensor() {
+  local d
+  for d in /sys/class/power_supply/*; do
+    [[ "$(cat "$d/type" 2>/dev/null)" == Battery && "$(cat "$d/scope" 2>/dev/null)" != Device ]] || continue
+    echo "power/battery_$(basename "$d")"
+    return
+  done
+}
+
+# Há sensor agregado de GPU? (sem kstatsviewer, assume que sim)
+has_gpu_sensor() {
+  command -v kstatsviewer >/dev/null || return 0
+  kstatsviewer --list 2>/dev/null | grep '^gpu/all/usage ' >/dev/null
+}
+
 apply_layout() {
   info "Recriando painéis e widgets"
 
@@ -506,6 +522,8 @@ apply_layout() {
 var WALLPAPER = "@WALLPAPER@";
 var LAUNCHERS = "@LAUNCHERS@";
 var COLORIZER = @COLORIZER@;
+var BATTERY = "@BATTERY@";   // ex.: "power/battery_BAT1" ("" se não houver bateria)
+var HAS_GPU = @HAS_GPU@;
 
 function cfg(w, group, values) {
   w.currentConfigGroup = group;
@@ -573,30 +591,35 @@ function monitor(x, y, w, h, face, sensors, colors, labels) {
     cfg(m, ["org.kde.ksysguard.linechart", "General"], { showGridLines: false, showYAxisLabels: false });
 }
 
-// Faixa de informações do sistema (topo)
-monitor(0, 0, W, 64, "org.kde.ksysguard.textonly",
-  ["os/system/uptime", "cpu/all/averageTemperature", "os/kernel/prettyName", "os/plasma/plasmaVersion",
-   "disk/all/usedPercent", "memory/physical/used", "memory/swap/used",
-   "power/battery_BAT1/chargeRate", "power/battery_BAT1/chargePercentage"],
-  { "cpu/all/averageTemperature": "255,85,0", "disk/all/usedPercent": "85,255,255",
-    "memory/physical/used": "255,170,255", "memory/swap/used": "0,170,255",
-    "os/kernel/prettyName": "85,255,127", "os/plasma/plasmaVersion": "255,255,127",
-    "os/system/uptime": "0,170,255", "power/battery_BAT1/chargePercentage": "85,255,127",
-    "power/battery_BAT1/chargeRate": "255,85,0" },
-  { "cpu/all/averageTemperature": "CPU Temperature", "disk/all/usedPercent": "Disk Usage",
-    "memory/physical/used": "Used Memory", "memory/swap/used": "Used Swap",
-    "os/plasma/plasmaVersion": "KDE Plasma", "power/battery_BAT1/chargePercentage": "Charge Percentage",
-    "power/battery_BAT1/chargeRate": "Charging Rate" });
+// Faixa de informações do sistema (topo); bateria só se a máquina tiver
+var infoSensors = ["os/system/uptime", "cpu/all/averageTemperature", "os/kernel/prettyName", "os/plasma/plasmaVersion",
+  "disk/all/usedPercent", "memory/physical/used", "memory/swap/used"];
+var infoColors = { "cpu/all/averageTemperature": "255,85,0", "disk/all/usedPercent": "85,255,255",
+  "memory/physical/used": "255,170,255", "memory/swap/used": "0,170,255",
+  "os/kernel/prettyName": "85,255,127", "os/plasma/plasmaVersion": "255,255,127",
+  "os/system/uptime": "0,170,255" };
+var infoLabels = { "cpu/all/averageTemperature": "CPU Temperature", "disk/all/usedPercent": "Disk Usage",
+  "memory/physical/used": "Used Memory", "memory/swap/used": "Used Swap",
+  "os/plasma/plasmaVersion": "KDE Plasma" };
+if (BATTERY) {
+  infoSensors.push(BATTERY + "/chargeRate", BATTERY + "/chargePercentage");
+  infoColors[BATTERY + "/chargeRate"] = "255,85,0";
+  infoColors[BATTERY + "/chargePercentage"] = "85,255,127";
+  infoLabels[BATTERY + "/chargeRate"] = "Charging Rate";
+  infoLabels[BATTERY + "/chargePercentage"] = "Charge Percentage";
+}
+monitor(0, 0, W, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, infoLabels);
 
 // Relógio grande
 place("com.github.vKaras1337.modernclock", 0, 64, W, 160);
 
 // Gráficos na base: CPU/GPU | Rede | Disco
 var y = H - 104;
+// CPU + uso agregado de todas as GPUs (só se a máquina tiver sensor de GPU)
 monitor(0, y, third, 96, "org.kde.ksysguard.linechart",
-  ["cpu/all/system", "gpu/gpu1/usage"],
-  { "cpu/all/system": "0,170,255", "gpu/gpu1/usage": "255,85,0" },
-  { "gpu/gpu1/usage": "GPU" });
+  HAS_GPU ? ["cpu/all/usage", "gpu/all/usage"] : ["cpu/all/usage"],
+  { "cpu/all/usage": "0,170,255", "gpu/all/usage": "255,85,0" },
+  { "cpu/all/usage": "CPU", "gpu/all/usage": "GPUs" });
 monitor(third, y, third, 96, "org.kde.ksysguard.linechart",
   ["network/all/download", "network/all/upload"],
   { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
@@ -612,6 +635,8 @@ JS
   js="${js//@WALLPAPER@/$WALLPAPER}"
   js="${js//@LAUNCHERS@/$TASK_LAUNCHERS}"
   js="${js//@COLORIZER@/$colorizer}"
+  js="${js//@BATTERY@/$(battery_sensor)}"
+  js="${js//@HAS_GPU@/$(has_gpu_sensor && echo true || echo false)}"
   local out
   out="$(plasma_js "$js")" || die "Falha ao aplicar o layout do Plasma"
   read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out")
