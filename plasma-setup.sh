@@ -614,9 +614,10 @@ monitor(0, 0, W, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, info
 place("com.github.vKaras1337.modernclock", 0, 64, W, 160);
 
 // Gráficos na base: CPU/GPU | Rede | Disco
-// Altura pedida bem pequena: o Plasma aumenta até o mínimo do widget (igual
-// para os três, mesma visualização) e mantém a base encostada no rodapé
-var BOTTOM_H = 32, y = H - BOTTOM_H - 8;
+// Altura mínima em que os três cabem iguais: 112px medidos com gridUnit 18
+// (o de CPU/GPU não desce disso pela legenda). Escala pela fonte da máquina
+// e arredonda para a grade de 16px da área de trabalho
+var BOTTOM_H = Math.ceil(112 * gridUnit / 18 / 16) * 16, y = H - BOTTOM_H - 8;
 // CPU + uso agregado de todas as GPUs (só se a máquina tiver sensor de GPU)
 monitor(0, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   HAS_GPU ? ["cpu/all/usage", "gpu/all/usage"] : ["cpu/all/usage"],
