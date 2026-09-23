@@ -714,7 +714,7 @@ verify_layout() {
   # a estrutura, com folga de 2 células (32px), e não a coordenada exata:
   #   topo: começa à esquerda, largura toda, perto do y esperado
   #   base: da esquerda p/ direita sem sobreposição, cobrindo a largura,
-  #         encostados no rodapé, com a mesma altura e a mesma largura
+  #         com a mesma largura (altura/base: só aviso)
   bad="$(python3 - "$DESK_GEOM" "$saved" "${DESK_RES%x*}" "${DESK_RES#*x}" <<'PY2'
 import sys
 def parse(s):
@@ -741,7 +741,7 @@ for k, (x, y, w, h) in want.items():
         if abs(gx - x) > TOL or abs(gw - w) > TOL:
             print(f"{k}: esperado x≈{x:g} w≈{w:g}, atual x={gx:g} w={gw:g}")
         if abs((gy + gh) - (y + h)) > 16:
-            print(f"{k}: deveria encostar na base ({y + h:g}), atual {gy + gh:g}")
+            print(f"AVISO {k}: não encosta na base ({y + h:g}), atual {gy + gh:g}")
 bottom.sort()
 for a, b in zip(bottom, bottom[1:]):
     if a[0] + a[1] > b[0] + 2:
@@ -751,13 +751,18 @@ if bottom:
         print(f"monitores inferiores não cobrem a largura (de {bottom[0][0]:g} a {bottom[-1][0] + bottom[-1][1]:g}, tela {W:g})")
     hs = [b[3] for b in bottom]
     if max(hs) - min(hs) > 2:
-        print(f"monitores inferiores com alturas diferentes: {hs}")
+        print(f"AVISO monitores inferiores com alturas diferentes: {hs}")
     ws = [b[1] for b in bottom]
     if max(ws) - min(ws) > 2:
         print(f"monitores inferiores com larguras diferentes: {ws}")
 PY2
 )"
-  [[ -z "$bad" ]] || errors+=("posição errada — $bad")
+  # Altura é só aviso: o Plasma impõe o mínimo de cada widget
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == AVISO* ]]; then warn "${line#AVISO }"; else errors+=("posição errada — $line"); fi
+  done <<<"$bad"
 
   ((${#errors[@]} == 0)) && return 0
   local e; for e in "${errors[@]}"; do warn "$e"; done
