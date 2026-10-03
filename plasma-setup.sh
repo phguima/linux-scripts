@@ -503,10 +503,32 @@ battery_sensor() {
   done
 }
 
-# Há sensor agregado de GPU? (sem kstatsviewer, assume que sim)
-has_gpu_sensor() {
-  command -v kstatsviewer >/dev/null || return 0
-  kstatsviewer --list 2>/dev/null | grep '^gpu/all/usage ' >/dev/null
+# Sensor de uso de GPU para o gráfico de CPU ("" se não houver).
+# Em híbridos (NVIDIA + integrada) usa só a integrada: ler a NVIDIA faz o
+# ksystemstats rodar "nvidia-smi dmon", que acorda a dGPU a cada 2s e impede
+# o RTD3. A NVIDIA é reconhecida pelo vendor PCI (0x10de) no sysfs e pelo nome
+# do sensor (gpu/gpuN/name), que só ela preenche; ler o nome não acorda a GPU.
+gpu_sensor() {
+  local d vendor nvidia=0 other=0 id name
+  for d in /sys/class/drm/card[0-9]*; do
+    [[ "$d" == *-* ]] && continue   # conectores (card0-HDMI-A-1 etc.)
+    vendor="$(cat "$d/device/vendor" 2>/dev/null)" || continue
+    if [[ "$vendor" == 0x10de ]]; then nvidia=1; else other=1; fi
+  done
+
+  if ! command -v kstatsviewer >/dev/null; then
+    # Sem como escolher a GPU: em híbrido, nada de GPU; senão, o agregado
+    ((nvidia && other)) || echo "gpu/all/usage"
+    return
+  fi
+  local list; list="$(kstatsviewer --list 2>/dev/null)"
+  grep -q '^gpu/all/usage ' <<<"$list" || return 0
+  if ! ((nvidia && other)); then echo "gpu/all/usage"; return; fi
+
+  for id in $(grep -oE '^gpu/gpu[0-9]+/usage ' <<<"$list" | cut -d/ -f2 | sort -u); do
+    name="$(timeout 5 kstatsviewer "gpu/$id/name" 2>/dev/null | sed "s|^gpu/$id/name ||")"
+    [[ "$name" == *NVIDIA* ]] || { echo "gpu/$id/usage"; return; }
+  done
 }
 
 apply_layout() {
@@ -523,7 +545,7 @@ var WALLPAPER = "@WALLPAPER@";
 var LAUNCHERS = "@LAUNCHERS@";
 var COLORIZER = @COLORIZER@;
 var BATTERY = "@BATTERY@";   // ex.: "power/battery_BAT1" ("" se não houver bateria)
-var HAS_GPU = @HAS_GPU@;
+var GPU = "@GPU@";        // ex.: "gpu/all/usage", "gpu/gpu1/usage" (só a integrada em híbridos) ou ""
 
 function cfg(w, group, values) {
   w.currentConfigGroup = group;
@@ -623,11 +645,14 @@ place("com.github.vKaras1337.modernclock", 0, 64, FW, 160);
 // (o de CPU/GPU não desce disso pela legenda). Escala pela fonte da máquina
 // e arredonda para a grade de 16px da área de trabalho
 var BOTTOM_H = Math.ceil(112 * gridUnit / 18 / 16) * 16, y = H - BOTTOM_H - 8;
-// CPU + uso agregado de todas as GPUs (só se a máquina tiver sensor de GPU)
-monitor(left, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
-  HAS_GPU ? ["cpu/all/usage", "gpu/all/usage"] : ["cpu/all/usage"],
-  { "cpu/all/usage": "0,170,255", "gpu/all/usage": "255,85,0" },
-  { "cpu/all/usage": "CPU", "gpu/all/usage": "GPUs" });
+// CPU + uso de GPU (todas, ou só a integrada em híbridos; ver gpu_sensor)
+var cpuSensors = ["cpu/all/usage"], cpuColors = { "cpu/all/usage": "0,170,255" }, cpuLabels = { "cpu/all/usage": "CPU" };
+if (GPU) {
+  cpuSensors.push(GPU);
+  cpuColors[GPU] = "255,85,0";
+  cpuLabels[GPU] = GPU === "gpu/all/usage" ? "GPUs" : "GPU";
+}
+monitor(left, y, third, BOTTOM_H, "org.kde.ksysguard.linechart", cpuSensors, cpuColors, cpuLabels);
 monitor(left + third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["network/all/download", "network/all/upload"],
   { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
@@ -644,7 +669,7 @@ JS
   js="${js//@LAUNCHERS@/$TASK_LAUNCHERS}"
   js="${js//@COLORIZER@/$colorizer}"
   js="${js//@BATTERY@/$(battery_sensor)}"
-  js="${js//@HAS_GPU@/$(has_gpu_sensor && echo true || echo false)}"
+  js="${js//@GPU@/$(gpu_sensor)}"
   local out
   out="$(plasma_js "$js")" || die "Falha ao aplicar o layout do Plasma"
   read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out")
