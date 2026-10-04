@@ -44,10 +44,12 @@ TRAY_ITEMS="org.kde.kdeconnect,org.kde.plasma.vault,org.kde.kscreen,org.kde.plas
 PANEL_COLORIZER_PRESET="Transparent"
 
 # Ícone personalizado por app: arquivo .desktop | nome do ícone (do tema acima).
-# O .desktop é gerado a partir do instalado no sistema, trocando só o ícone;
-# app não instalado é pulado
+# O .desktop é gerado a partir do instalado no sistema, trocando só o ícone
+# (se o app só tiver .desktop local, ele é editado no lugar); app não
+# instalado é pulado
 ICON_OVERRIDES=(
   "brave-browser.desktop|brave-desktop-dev"
+  "antigravity.desktop|antigravity"
 )
 
 KZONES_LAYOUTS=$(cat <<'JSON'
@@ -498,7 +500,8 @@ apply_theme() {
 
 # Gera em ~/.local/share/applications (que tem prioridade) uma cópia do .desktop
 # do sistema trocando só o Icon= da seção principal; partir do arquivo instalado
-# mantém traduções e ações do pacote. Uma cópia local anterior vai para o backup
+# mantém traduções e ações do pacote. Sem .desktop no sistema (app instalado só
+# para o usuário), edita o local. A versão local anterior vai para o backup
 apply_icon_overrides() {
   local dest="$HOME/.local/share/applications" entry file icon src dir dirs
   IFS=: read -ra dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
@@ -510,7 +513,9 @@ apply_icon_overrides() {
       [[ "$dir" == "$HOME/.local/share" ]] && continue
       [[ -f "$dir/applications/$file" ]] && { src="$dir/applications/$file"; break; }
     done
-    if [[ -z "$src" ]]; then
+    if [[ -z "$src" && -f "$dest/$file" ]]; then
+      src="$BACKUP_DIR/$file"   # só local: edita a partir da cópia do backup
+    elif [[ -z "$src" ]]; then
       warn "Ícone de $file: app não instalado — pulando"
       continue
     fi
@@ -744,8 +749,11 @@ JS
 # do plasmashell: se a bandeja só ganhar containment depois de um reinício,
 # ele é novo e precisa receber os itens de novo
 configure_tray() {
-  # A bandeja cria o próprio containment de forma assíncrona: tenta até todas
-  # as bandejas terem containment (até ~30s, VMs lentas) e então define os itens.
+  # Onde ficam os itens depende da versão do Plasma:
+  #   - antigas: a bandeja cria um containment próprio (SystrayContainmentId)
+  #     de forma assíncrona; espera ele existir (até ~30s, VMs lentas)
+  #   - recentes (ex.: 6.7): a própria bandeja é o containment e não tem
+  #     SystrayContainmentId; os itens vão no [General] dela
   # Os itens entram como string JS, com \ e " escapados
   local items="${TRAY_ITEMS//\\/\\\\}"
   items="${items//\"/\\\"}"
@@ -755,8 +763,9 @@ var ITEMS = "@ITEMS@", total = 0, done = 0;
 panels().forEach(function (p) {
   p.widgets("org.kde.plasma.systemtray").forEach(function (t) {
     total++;
-    var tray = desktopById(t.readConfig("SystrayContainmentId"));
-    if (!tray) return;
+    var id = t.readConfig("SystrayContainmentId");
+    var tray = id ? desktopById(id) : t;
+    if (!tray) return;   // Plasma antigo: containment ainda não criado
     tray.currentConfigGroup = ["General"];
     tray.writeConfig("extraItems", ITEMS);
     tray.writeConfig("knownItems", ITEMS);
@@ -776,7 +785,7 @@ JS
     fi
     sleep 0.5
   done
-  ((tray_ok)) || warn "A bandeja não criou o containment a tempo (${tray_out:-sem resposta}) — itens não configurados"
+  ((tray_ok)) || warn "Não consegui configurar os itens da bandeja (${tray_out:-sem resposta})"
 }
 
 stop_plasmashell() {
@@ -812,15 +821,17 @@ verify_layout() {
     panels().forEach(function (p) {
       print("PANEL " + p.location + " " + p.widgets().map(function (w) { return w.type; }).join(",") + "\n");
       p.widgets("org.kde.plasma.systemtray").forEach(function (t) {
-        print("TRAYC " + p.location + " " + (desktopById(t.readConfig("SystrayContainmentId")) ? "ok" : "missing") + "\n");
+        var id = t.readConfig("SystrayContainmentId"), tray = id ? desktopById(id) : t, ok = false;
+        if (tray) { tray.currentConfigGroup = ["General"]; ok = !!tray.readConfig("extraItems"); }
+        print("TRAYC " + p.location + " " + (ok ? "ok" : "missing") + "\n");
       });
     });
     var d = desktopById('"$DESK_ID"');
     if (d) print("DESKW " + d.widgets().map(function (w) { return w.type; }).join(",") + "\n");
   ')"
   grep -q '^PANEL top .*org.kde.plasma.systemtray' <<<"$out" || errors+=("painel superior ausente ou sem bandeja")
-  # Sem containment, a bandeja fica vazia e, com o painel em "fit", invisível
-  grep -q '^TRAYC top ok' <<<"$out" || errors+=("bandeja do painel superior sem containment (ficaria vazia)")
+  # Sem itens configurados, a bandeja pode ficar vazia e, com o painel em "fit", invisível
+  grep -q '^TRAYC top ok' <<<"$out" || errors+=("bandeja do painel superior sem itens configurados")
   grep -q '^PANEL left .*org.kde.plasma.icontasks' <<<"$out" || errors+=("painel lateral ausente ou sem tarefas")
   local deskw; deskw="$(grep '^DESKW ' <<<"$out" || true)"
   [[ "$(grep -o 'org.kde.plasma.systemmonitor' <<<"$deskw" | wc -l)" -eq 4 ]] || errors+=("esperava 4 monitores do sistema na área de trabalho")
