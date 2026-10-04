@@ -5,7 +5,7 @@
 #   1) instala a fonte, se faltar (via gerenciador de pacotes, pede sudo)
 #   2) abre a janela "Obter novos..." do KDE para instalar os assets da
 #      KDE Store manualmente e espera a confirmação, verificando a instalação
-#   3) aplica tema, KWin (KZones) e recria painéis/widgets
+#   3) aplica tema, ícones de apps, KWin (KZones) e recria painéis/widgets
 #
 # Requer uma sessão Plasma 6 em execução. Faz backup das configs antes.
 set -euo pipefail
@@ -27,18 +27,28 @@ LOOK_AND_FEEL="org.kde.breezedark.desktop"
 ICON_THEME="Ars-Dark-Icons"
 FONT_FAMILY="Roboto Medium"          # instalada no passo 1 se faltar
 
-# Aplicado só se existir na pasta de imagens do usuário (~/Pictures)
+# Vem em assets/wallpapers/ ao lado do script e é copiado para a pasta de
+# imagens do usuário (~/Pictures/wallpapers), se ainda não estiver lá
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PICTURES_DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")"
-WALLPAPER="$PICTURES_DIR/wallpapers/wallpaper_16.jpeg"
+WALLPAPER_SRC="$SCRIPT_DIR/assets/wallpapers/wallpaper_16.jpeg"
+WALLPAPER="$PICTURES_DIR/wallpapers/$(basename "$WALLPAPER_SRC")"
 
 VIRTUAL_DESKTOPS=4
 VIRTUAL_DESKTOP_ROWS=2
 
-TASK_LAUNCHERS="applications:systemsettings.desktop,applications:brave-origin.desktop,applications:brave-browser.desktop,applications:org.kde.konsole.desktop,preferred://filemanager,applications:com.microsoft.VSCode.desktop,applications:com.spotify.Client.desktop,applications:org.kde.discover.desktop"
+TASK_LAUNCHERS="applications:systemsettings.desktop,applications:brave-origin.desktop,applications:brave-browser.desktop,applications:org.kde.konsole.desktop,applications:com.rtosta.zapzap.desktop,preferred://filemanager,applications:antigravity.desktop,applications:com.microsoft.VSCode.desktop,applications:com.spotify.Client.desktop,applications:org.kde.discover.desktop"
 
 TRAY_ITEMS="org.kde.kdeconnect,org.kde.plasma.vault,org.kde.kscreen,org.kde.plasma.battery,org.kde.plasma.bluetooth,org.kde.plasma.brightness,org.kde.plasma.cameraindicator,org.kde.plasma.clipboard,org.kde.plasma.devicenotifier,org.kde.plasma.keyboardindicator,org.kde.plasma.keyboardlayout,org.kde.plasma.manage-inputmethod,org.kde.plasma.mediacontroller,org.kde.plasma.networkmanagement,org.kde.plasma.notifications,org.kde.plasma.printmanager,org.kde.plasma.volume,org.kde.plasma.weather"
 
 PANEL_COLORIZER_PRESET="Transparent"
+
+# Ícone personalizado por app: arquivo .desktop | nome do ícone (do tema acima).
+# O .desktop é gerado a partir do instalado no sistema, trocando só o ícone;
+# app não instalado é pulado
+ICON_OVERRIDES=(
+  "brave-browser.desktop|brave-desktop-dev"
+)
 
 KZONES_LAYOUTS=$(cat <<'JSON'
 [
@@ -138,7 +148,7 @@ KZONES_LAYOUTS=$(cat <<'JSON'
         ]
     },
     {
-        "name": "Triple Grid Rigth",
+        "name": "Triple Grid Right",
         "padding": 5,
         "zones": [
             {
@@ -445,14 +455,13 @@ step_assets() {
 # ========================================================= 3) LAYOUT =========
 
 backup_configs() {
-  local dir
-  dir="$HOME/.config/plasma-setup-backup-$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$dir"
+  BACKUP_DIR="$HOME/.config/plasma-setup-backup-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$BACKUP_DIR"
   local f
   for f in plasma-org.kde.plasma.desktop-appletsrc plasmashellrc kdeglobals kwinrc kscreenlockerrc; do
-    [[ -f "$HOME/.config/$f" ]] && cp -a "$HOME/.config/$f" "$dir/"
+    [[ -f "$HOME/.config/$f" ]] && cp -a "$HOME/.config/$f" "$BACKUP_DIR/"
   done
-  ok "Backup das configs atuais em $dir"
+  ok "Backup das configs atuais em $BACKUP_DIR"
 }
 
 apply_theme() {
@@ -472,15 +481,45 @@ apply_theme() {
   kwriteconfig6 --file kdeglobals --group General --key XftHintStyle hintslight
   kwriteconfig6 --file kdeglobals --group General --key XftSubPixel none
 
+  if [[ ! -f "$WALLPAPER" && -f "$WALLPAPER_SRC" ]]; then
+    mkdir -p "$(dirname "$WALLPAPER")"
+    cp "$WALLPAPER_SRC" "$WALLPAPER" && info "Wallpaper copiado para $WALLPAPER"
+  fi
   if [[ -f "$WALLPAPER" ]]; then
     info "Wallpaper: $WALLPAPER"
     kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key Image "file://$WALLPAPER"
     kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image --group General --key PreviewImage "file://$WALLPAPER"
   else
-    warn "Wallpaper não encontrado em $WALLPAPER — pulando (papel de parede atual mantido)"
+    warn "Wallpaper não encontrado em $WALLPAPER nem em $WALLPAPER_SRC — pulando (papel de parede atual mantido)"
     WALLPAPER=""
   fi
   ok "Tema aplicado"
+}
+
+# Gera em ~/.local/share/applications (que tem prioridade) uma cópia do .desktop
+# do sistema trocando só o Icon= da seção principal; partir do arquivo instalado
+# mantém traduções e ações do pacote. Uma cópia local anterior vai para o backup
+apply_icon_overrides() {
+  local dest="$HOME/.local/share/applications" entry file icon src dir dirs
+  IFS=: read -ra dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  dirs+=(/var/lib/flatpak/exports/share "$HOME/.local/share/flatpak/exports/share")
+  for entry in "${ICON_OVERRIDES[@]}"; do
+    IFS='|' read -r file icon <<<"$entry"
+    src=""
+    for dir in "${dirs[@]}"; do
+      [[ "$dir" == "$HOME/.local/share" ]] && continue
+      [[ -f "$dir/applications/$file" ]] && { src="$dir/applications/$file"; break; }
+    done
+    if [[ -z "$src" ]]; then
+      warn "Ícone de $file: app não instalado — pulando"
+      continue
+    fi
+    mkdir -p "$dest"
+    [[ -f "$dest/$file" ]] && cp -a "$dest/$file" "$BACKUP_DIR/"
+    sed '/^\[Desktop Entry\]/,/^\[/ s|^Icon=.*|Icon='"$icon"'|' "$src" >"$dest/$file"
+    info "Ícone de $file: $icon"
+  done
+  kbuildsycoca6 >/dev/null 2>&1 || true
 }
 
 apply_kwin() {
@@ -490,6 +529,16 @@ apply_kwin() {
   kwriteconfig6 --file kwinrc --group Plugins --key kzonesEnabled true
   kwriteconfig6 --file kwinrc --group Script-kzones --key layoutsJson "$KZONES_LAYOUTS"
   qdbus org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+
+  # Cria as áreas que faltam e ajusta as linhas na sessão atual (sem logout).
+  # Só cria, nunca remove, para não fechar áreas com janelas abertas
+  local vdm=(org.kde.KWin /VirtualDesktopManager) iface=org.kde.KWin.VirtualDesktopManager count
+  count="$(qdbus "${vdm[@]}" "$iface.count" 2>/dev/null || echo 0)"
+  while ((count > 0 && count < VIRTUAL_DESKTOPS)); do
+    qdbus "${vdm[@]}" "$iface.createDesktop" "$count" "" >/dev/null 2>&1 || break
+    count=$((count + 1))
+  done
+  qdbus "${vdm[@]}" "$iface.rows" "$VIRTUAL_DESKTOP_ROWS" >/dev/null 2>&1 || true
   ok "KWin configurado"
 }
 
@@ -506,14 +555,20 @@ battery_sensor() {
 # Sensor de uso de GPU para o gráfico de CPU ("" se não houver).
 # Em híbridos (NVIDIA + integrada) usa só a integrada: ler a NVIDIA faz o
 # ksystemstats rodar "nvidia-smi dmon", que acorda a dGPU a cada 2s e impede
-# o RTD3. A NVIDIA é reconhecida pelo vendor PCI (0x10de) no sysfs e pelo nome
-# do sensor (gpu/gpuN/name), que só ela preenche; ler o nome não acorda a GPU.
+# o RTD3. O ksystemstats numera as GPUs (gpu0, gpu1...) na ordem em que o udev
+# lista os cards DRM, ou seja, pelo caminho no sysfs; a mesma ordem aqui casa
+# cada gpuN com o vendor PCI (NVIDIA = 0x10de). Por garantia, também pula a
+# gpuN cujo nome (gpu/gpuN/name, que só a NVIDIA preenche) cite NVIDIA; ler o
+# nome não acorda a GPU.
 gpu_sensor() {
-  local d vendor nvidia=0 other=0 id name
-  for d in /sys/class/drm/card[0-9]*; do
-    [[ "$d" == *-* ]] && continue   # conectores (card0-HDMI-A-1 etc.)
-    vendor="$(cat "$d/device/vendor" 2>/dev/null)" || continue
-    if [[ "$vendor" == 0x10de ]]; then nvidia=1; else other=1; fi
+  local d vendors=() nvidia=0 other=0
+  while read -r d; do
+    vendors+=("$(cat "$d/device/vendor" 2>/dev/null)")
+  done < <(for d in /sys/class/drm/card[0-9]*; do
+             [[ "$d" == *-* ]] || readlink -f "$d"   # pula conectores (card0-HDMI-A-1 etc.)
+           done | LC_ALL=C sort)
+  for d in "${vendors[@]}"; do
+    if [[ "$d" == 0x10de ]]; then nvidia=1; else other=1; fi
   done
 
   if ! command -v kstatsviewer >/dev/null; then
@@ -525,9 +580,15 @@ gpu_sensor() {
   grep -q '^gpu/all/usage ' <<<"$list" || return 0
   if ! ((nvidia && other)); then echo "gpu/all/usage"; return; fi
 
-  for id in $(grep -oE '^gpu/gpu[0-9]+/usage ' <<<"$list" | cut -d/ -f2 | sort -u); do
-    name="$(timeout 5 kstatsviewer "gpu/$id/name" 2>/dev/null | sed "s|^gpu/$id/name ||")"
-    [[ "$name" == *NVIDIA* ]] || { echo "gpu/$id/usage"; return; }
+  # Se a contagem não bater, o mapeamento não é confiável: sem GPU
+  (($(grep -cE '^gpu/gpu[0-9]+/usage ' <<<"$list") == ${#vendors[@]})) || return 0
+  local i name
+  for i in "${!vendors[@]}"; do
+    [[ "${vendors[i]}" != 0x10de ]] && grep -q "^gpu/gpu$i/usage " <<<"$list" || continue
+    name="$(timeout 5 kstatsviewer "gpu/gpu$i/name" 2>/dev/null | sed "s|^gpu/gpu$i/name ||")"
+    [[ "$name" == *NVIDIA* ]] && continue
+    echo "gpu/gpu$i/usage"
+    return
   done
 }
 
@@ -576,15 +637,15 @@ cfg(top.addWidget("org.kde.plasma.digitalclock"), ["Appearance"], { fontWeight: 
 top.addWidget("org.kde.plasma.showdesktop");
 
 // ── Painel lateral esquerdo: menu, tarefas, Panel Colorizer ──
-var left = new Panel;
-left.location = "left";
-left.height = 52;
-left.floating = true;
-left.lengthMode = "fit";
-left.hiding = "autohide";
-left.addWidget("org.kde.plasma.kickerdash");
-cfg(left.addWidget("org.kde.plasma.icontasks"), ["General"], { launchers: LAUNCHERS });
-var colorizer = left.addWidget("luisbocanegra.panel.colorizer");
+var leftPanel = new Panel;
+leftPanel.location = "left";
+leftPanel.height = 52;
+leftPanel.floating = true;
+leftPanel.lengthMode = "fit";
+leftPanel.hiding = "autohide";
+leftPanel.addWidget("org.kde.plasma.kickerdash");
+cfg(leftPanel.addWidget("org.kde.plasma.icontasks"), ["General"], { launchers: LAUNCHERS });
+var colorizer = leftPanel.addWidget("luisbocanegra.panel.colorizer");
 var colorizerCfg = { hideWidget: true, configurationOverrides: '{"overrides":{},"associations":[]}' };
 if (COLORIZER) colorizerCfg.globalSettings = JSON.stringify(COLORIZER);
 cfg(colorizer, ["General"], colorizerCfg);
@@ -597,7 +658,7 @@ var W = g.width, H = g.height;
 // Os três gráficos inferiores têm a mesma largura; a sobra (< 48px) é
 // dividida nas bordas, mantendo o grupo centralizado
 var FW = Math.floor(W / 16) * 16, third = Math.floor(FW / 3 / 16) * 16;
-var left = Math.floor((FW - 3 * third) / 2 / 16) * 16;
+var marginX = Math.floor((FW - 3 * third) / 2 / 16) * 16;
 
 // Posições gravadas depois em ItemGeometries (o addWidget sozinho não fixa)
 var placed = [];
@@ -652,12 +713,12 @@ if (GPU) {
   cpuColors[GPU] = "255,85,0";
   cpuLabels[GPU] = GPU === "gpu/all/usage" ? "GPUs" : "GPU";
 }
-monitor(left, y, third, BOTTOM_H, "org.kde.ksysguard.linechart", cpuSensors, cpuColors, cpuLabels);
-monitor(left + third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
+monitor(marginX, y, third, BOTTOM_H, "org.kde.ksysguard.linechart", cpuSensors, cpuColors, cpuLabels);
+monitor(marginX + third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["network/all/download", "network/all/upload"],
   { "network/all/download": "0,170,255", "network/all/upload": "255,85,0" },
   { "network/all/download": "Download", "network/all/upload": "Upload" });
-monitor(left + 2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
+monitor(marginX + 2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   ["disk/all/write", "disk/all/read"],
   { "disk/all/read": "255,85,0", "disk/all/write": "0,170,255" },
   { "disk/all/read": "Read", "disk/all/write": "Write" });
@@ -675,21 +736,47 @@ JS
   read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out")
   [[ -n "${DESK_GEOM:-}" ]] || die "O Plasma não devolveu as posições dos widgets: $out"
 
-  # A bandeja cria o próprio containment de forma assíncrona: configura depois
-  sleep 2
-  plasma_js "$(cat <<JS
+  configure_tray
+  ok "Painéis e widgets criados"
+}
+
+# Define os itens da bandeja. Roda após criar o layout e após cada reinício
+# do plasmashell: se a bandeja só ganhar containment depois de um reinício,
+# ele é novo e precisa receber os itens de novo
+configure_tray() {
+  # A bandeja cria o próprio containment de forma assíncrona: tenta até todas
+  # as bandejas terem containment (até ~30s, VMs lentas) e então define os itens.
+  # Os itens entram como string JS, com \ e " escapados
+  local items="${TRAY_ITEMS//\\/\\\\}"
+  items="${items//\"/\\\"}"
+  local tray_js
+  tray_js=$(cat <<'JS'
+var ITEMS = "@ITEMS@", total = 0, done = 0;
 panels().forEach(function (p) {
   p.widgets("org.kde.plasma.systemtray").forEach(function (t) {
+    total++;
     var tray = desktopById(t.readConfig("SystrayContainmentId"));
     if (!tray) return;
     tray.currentConfigGroup = ["General"];
-    tray.writeConfig("extraItems", "$TRAY_ITEMS");
-    tray.writeConfig("knownItems", "$TRAY_ITEMS");
+    tray.writeConfig("extraItems", ITEMS);
+    tray.writeConfig("knownItems", ITEMS);
+    done++;
   });
 });
+print("TRAY " + done + "/" + total + "\n");
 JS
-)" >/dev/null || warn "Não consegui configurar os itens da bandeja"
-  ok "Painéis e widgets criados"
+)
+  tray_js="${tray_js//@ITEMS@/$items}"
+  local _ tray_out="" tray_ok=0
+  for _ in {1..60}; do
+    tray_out="$(plasma_js "$tray_js" 2>/dev/null | grep '^TRAY ' || true)"
+    if [[ "$tray_out" =~ ^TRAY\ ([0-9]+)/([0-9]+)$ ]] &&
+       ((BASH_REMATCH[2] > 0 && BASH_REMATCH[1] == BASH_REMATCH[2])); then
+      tray_ok=1; break
+    fi
+    sleep 0.5
+  done
+  ((tray_ok)) || warn "A bandeja não criou o containment a tempo (${tray_out:-sem resposta}) — itens não configurados"
 }
 
 stop_plasmashell() {
@@ -722,11 +809,18 @@ write_geometry() {
 verify_layout() {
   local errors=() out saved
   out="$(plasma_js '
-    panels().forEach(function (p) { print("PANEL " + p.location + " " + p.widgets().map(function (w) { return w.type; }).join(",") + "\n"); });
+    panels().forEach(function (p) {
+      print("PANEL " + p.location + " " + p.widgets().map(function (w) { return w.type; }).join(",") + "\n");
+      p.widgets("org.kde.plasma.systemtray").forEach(function (t) {
+        print("TRAYC " + p.location + " " + (desktopById(t.readConfig("SystrayContainmentId")) ? "ok" : "missing") + "\n");
+      });
+    });
     var d = desktopById('"$DESK_ID"');
     if (d) print("DESKW " + d.widgets().map(function (w) { return w.type; }).join(",") + "\n");
   ')"
   grep -q '^PANEL top .*org.kde.plasma.systemtray' <<<"$out" || errors+=("painel superior ausente ou sem bandeja")
+  # Sem containment, a bandeja fica vazia e, com o painel em "fit", invisível
+  grep -q '^TRAYC top ok' <<<"$out" || errors+=("bandeja do painel superior sem containment (ficaria vazia)")
   grep -q '^PANEL left .*org.kde.plasma.icontasks' <<<"$out" || errors+=("painel lateral ausente ou sem tarefas")
   local deskw; deskw="$(grep '^DESKW ' <<<"$out" || true)"
   [[ "$(grep -o 'org.kde.plasma.systemmonitor' <<<"$deskw" | wc -l)" -eq 4 ]] || errors+=("esperava 4 monitores do sistema na área de trabalho")
@@ -798,6 +892,7 @@ step_layout() {
   bold "━━ 3/3 — Aplicando layout"
   backup_configs
   apply_theme
+  apply_icon_overrides
   apply_kwin
   apply_layout
 
@@ -807,6 +902,7 @@ step_layout() {
     stop_plasmashell
     write_geometry
     start_plasmashell
+    configure_tray
     if verify_layout; then
       ok "Layout verificado: painéis, widgets e posições corretos"
       echo

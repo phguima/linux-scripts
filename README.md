@@ -87,9 +87,9 @@ Precisa de uma sessão Plasma 6 em execução. Etapas:
 
 1. **Fonte** — instala o Roboto se faltar (dnf/apt/pacman/zypper, pede `sudo`).
 2. **Assets da KDE Store** — abre as janelas "Obter novos..." para instalar manualmente Advanced Modern Clock, Panel Colorizer, Ars Icons e KZones, e verifica a instalação antes de continuar.
-3. **Layout** — faz backup das configs em `~/.config/plasma-setup-backup-<data>/`, aplica tema Breeze Dark, ícones, fontes, wallpaper, 4 áreas de trabalho, layouts do KZones, recria os painéis (superior e lateral) e os widgets da área de trabalho (relógio e monitores do sistema). Reinicia o plasmashell e confere o resultado (até 3 tentativas).
+3. **Layout** — faz backup das configs em `~/.config/plasma-setup-backup-<data>/`, aplica tema Breeze Dark, ícones (incluindo ícones personalizados de apps), fontes, wallpaper, 4 áreas de trabalho em 2 linhas, layouts do KZones, recria os painéis (superior e lateral) e os widgets da área de trabalho (relógio e monitores do sistema). Reinicia o plasmashell e confere o resultado (até 3 tentativas).
 
-Tudo o que é aplicado fica na seção `DEFINIÇÕES` no topo do script. O wallpaper só é usado se existir em `~/Pictures/wallpapers/wallpaper_16.jpeg`. Faça logout/login no final.
+Tudo o que é aplicado fica na seção `DEFINIÇÕES` no topo do script. O wallpaper fica em `assets/wallpapers/` e é copiado para `~/Pictures/wallpapers/` se ainda não estiver lá (por isso, rode o script de dentro do repositório clonado). Faça logout/login no final.
 
 ### tweaks-gnome-shell.sh
 
