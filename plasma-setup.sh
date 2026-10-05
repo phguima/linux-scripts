@@ -703,8 +703,9 @@ if (BATTERY) {
 }
 monitor(0, 0, FW, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, infoLabels);
 
-// Relógio grande
-place("com.github.vKaras1337.modernclock", 0, 64, FW, 160);
+// Relógio grande: dia e data sem nome localizado, hora em 24h
+cfg(place("com.github.vKaras1337.modernclock", 0, 64, FW, 160), ["Appearance"],
+  { use_local_day_name: false, use_local_date_name: false, use_24_hour_format: true });
 
 // Gráficos na base: CPU/GPU | Rede | Disco
 // Altura mínima em que os três cabem iguais: 112px medidos com gridUnit 18
