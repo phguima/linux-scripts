@@ -547,13 +547,28 @@ apply_kwin() {
   ok "KWin configurado"
 }
 
-# Sensor da bateria do sistema (BAT0, BAT1...), ignorando periféricos (mouse etc.)
+# Sensor da bateria do sistema (BAT0, BAT1...), ignorando periféricos (mouse etc.).
+# O ksystemstats identifica a bateria pelo número de série do UPower e só usa
+# o fim do caminho UPower (battery_BAT0) quando ela não tem série; por isso o
+# ID muda de máquina para máquina (ex.: "power/3986" ou "power/battery_BAT1").
+# Confere no kstatsviewer quando disponível
 battery_sensor() {
-  local d
+  local d name serial id list=""
+  command -v kstatsviewer >/dev/null && list="$(kstatsviewer --list 2>/dev/null)"
   for d in /sys/class/power_supply/*; do
     [[ "$(cat "$d/type" 2>/dev/null)" == Battery && "$(cat "$d/scope" 2>/dev/null)" != Device ]] || continue
-    echo "power/battery_$(basename "$d")"
-    return
+    name="$(basename "$d")"
+    serial=""
+    command -v upower >/dev/null &&
+      serial="$(upower -i "/org/freedesktop/UPower/devices/battery_$name" 2>/dev/null | sed -n 's/^ *serial: *//p')"
+    [[ -n "$serial" ]] || serial="$(cat "$d/serial_number" 2>/dev/null)"
+    serial="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$serial")"   # como o UPower
+    for id in ${serial:+"$serial"} "battery_$name"; do
+      if [[ -z "$list" ]] || grep -qF "power/$id/chargePercentage " <<<"$list"; then
+        echo "power/$id"
+        return
+      fi
+    done
   done
 }
 
@@ -597,6 +612,27 @@ gpu_sensor() {
   done
 }
 
+# Sensor de temperatura da GPU ("" se não houver), a partir da GPU escolhida
+# em gpu_sensor (em híbridos, só a integrada; ler a NVIDIA acordaria a dGPU).
+# Só vale se ler um valor > 0: a Intel integrada, por exemplo, expõe o sensor
+# mas sempre devolve 0 (a temperatura dela é a da própria CPU)
+gpu_temp_sensor() {
+  local usage="$1" list id value
+  [[ -n "$usage" ]] && command -v kstatsviewer >/dev/null || return 0
+  list="$(kstatsviewer --list 2>/dev/null)"
+  if [[ "$usage" == gpu/all/usage ]]; then
+    id="$(grep -oE '^gpu/gpu[0-9]+/temperature ' <<<"$list" | head -1 || true)"
+  else
+    id="${usage%/usage}/temperature "
+    grep -qF "$id" <<<"$list" || return 0
+  fi
+  id="${id% }"
+  [[ -n "$id" ]] || return 0
+  value="$(timeout 5 kstatsviewer "$id" 2>/dev/null | sed "s|^$id ||")"
+  awk -v v="$value" 'BEGIN { exit !(v + 0 > 0) }' && echo "$id"
+  return 0
+}
+
 apply_layout() {
   info "Recriando painéis e widgets"
 
@@ -612,14 +648,18 @@ var LAUNCHERS = "@LAUNCHERS@";
 var COLORIZER = @COLORIZER@;
 var BATTERY = "@BATTERY@";   // ex.: "power/battery_BAT1" ("" se não houver bateria)
 var GPU = "@GPU@";        // ex.: "gpu/all/usage", "gpu/gpu1/usage" (só a integrada em híbridos) ou ""
+var GPU_TEMP = "@GPU_TEMP@";   // ex.: "gpu/gpu0/temperature" ("" se a GPU não informar temperatura)
 
 function cfg(w, group, values) {
   w.currentConfigGroup = group;
   for (var k in values) w.writeConfig(k, values[k]);
 }
 
-// Limpa o layout atual
-panels().forEach(function (p) { p.remove(); });
+// Limpa o layout atual. Os painéis antigos só são removidos depois de criar
+// os novos: criar uma bandeja depois que o processo removeu outra derruba o
+// plasmashell (Plasma 6.6), que volta sem a bandeja nova. Por isso o shell
+// também é reiniciado antes deste script (step_layout)
+var oldPanels = panels();
 desktops().forEach(function (d) {
   d.widgets().forEach(function (w) { w.remove(); });
   if (WALLPAPER) {
@@ -628,8 +668,13 @@ desktops().forEach(function (d) {
   }
 });
 
+// Tudo vai para a tela principal (no Plasma, a tela 0). Sem isso, o painel
+// novo nasce na tela ativa do KWin (a do mouse/janela em foco)
+var PRIMARY = 0;
+
 // ── Painel superior: bandeja, relógio, pager ──
 var top = new Panel;
+top.screen = PRIMARY;
 top.location = "top";
 top.height = 34;
 top.floating = true;
@@ -637,12 +682,13 @@ top.lengthMode = "fit";
 top.hiding = "autohide";
 top.addWidget("org.kde.plasma.marginsseparator");
 top.addWidget("org.kde.plasma.pager");
-top.addWidget("org.kde.plasma.systemtray");
+var tray = top.addWidget("org.kde.plasma.systemtray");   // itens: ver write_tray
 cfg(top.addWidget("org.kde.plasma.digitalclock"), ["Appearance"], { fontWeight: 400 });
 top.addWidget("org.kde.plasma.showdesktop");
 
 // ── Painel lateral esquerdo: menu, tarefas, Panel Colorizer ──
 var leftPanel = new Panel;
+leftPanel.screen = PRIMARY;
 leftPanel.location = "left";
 leftPanel.height = 52;
 leftPanel.floating = true;
@@ -655,8 +701,10 @@ var colorizerCfg = { hideWidget: true, configurationOverrides: '{"overrides":{},
 if (COLORIZER) colorizerCfg.globalSettings = JSON.stringify(COLORIZER);
 cfg(colorizer, ["General"], colorizerCfg);
 
+oldPanels.forEach(function (p) { p.remove(); });
+
 // ── Widgets da área de trabalho (tela principal) ──
-var desk = desktopsForActivity(currentActivity()).filter(function (d) { return d.screen === 0; })[0] || desktops()[0];
+var desk = desktopsForActivity(currentActivity()).filter(function (d) { return d.screen === PRIMARY; })[0] || desktops()[0];
 var g = screenGeometry(desk.screen);
 var W = g.width, H = g.height;
 // A área de trabalho encaixa tamanhos numa grade de 16px: calcula já nela.
@@ -684,23 +732,28 @@ function monitor(x, y, w, h, face, sensors, colors, labels) {
     cfg(m, ["org.kde.ksysguard.linechart", "General"], { showGridLines: false, showYAxisLabels: false });
 }
 
-// Faixa de informações do sistema (topo); bateria só se a máquina tiver
-var infoSensors = ["os/system/uptime", "cpu/all/averageTemperature", "os/kernel/prettyName", "os/plasma/plasmaVersion",
-  "disk/all/usedPercent", "memory/physical/used", "memory/swap/used"];
-var infoColors = { "cpu/all/averageTemperature": "255,85,0", "disk/all/usedPercent": "85,255,255",
-  "memory/physical/used": "255,170,255", "memory/swap/used": "0,170,255",
-  "os/kernel/prettyName": "85,255,127", "os/plasma/plasmaVersion": "255,255,127",
-  "os/system/uptime": "0,170,255" };
+// Faixa de informações do sistema (topo); bateria só se a máquina tiver.
+// A face "textonly" divide a linha em colunas iguais, todas da largura do
+// maior item; se não couberem, quebra em outra linha, e o rótulo some quando
+// o valor ocupa a coluna toda. O kernel é o valor mais longo: usa só a versão
+// (sem o "Linux "); swap e uptime ficam de fora para sobrar espaço para os rótulos
+var infoSensors = ["cpu/all/averageTemperature", "os/kernel/version", "os/plasma/plasmaVersion",
+  "disk/all/usedPercent", "memory/physical/used"];
 var infoLabels = { "cpu/all/averageTemperature": "CPU Temperature", "disk/all/usedPercent": "Disk Usage",
-  "memory/physical/used": "Used Memory", "memory/swap/used": "Used Swap",
-  "os/plasma/plasmaVersion": "KDE Plasma" };
+  "memory/physical/used": "Used Memory", "os/kernel/version": "Kernel", "os/plasma/plasmaVersion": "KDE Plasma" };
+// Temperatura da GPU, se ela informar (ver gpu_temp_sensor)
+if (GPU_TEMP) {
+  infoSensors.splice(1, 0, GPU_TEMP);
+  infoLabels[GPU_TEMP] = "GPU Temperature";
+}
 if (BATTERY) {
   infoSensors.push(BATTERY + "/chargeRate", BATTERY + "/chargePercentage");
-  infoColors[BATTERY + "/chargeRate"] = "255,85,0";
-  infoColors[BATTERY + "/chargePercentage"] = "85,255,127";
   infoLabels[BATTERY + "/chargeRate"] = "Charging Rate";
   infoLabels[BATTERY + "/chargePercentage"] = "Charge Percentage";
 }
+// Cores na ordem dos itens, repetindo o ciclo: #00aaff #ff5500 #55ff7f #ffff00
+var INFO_PALETTE = ["0,170,255", "255,85,0", "85,255,127", "255,255,0"], infoColors = {};
+infoSensors.forEach(function (id, i) { infoColors[id] = INFO_PALETTE[i % INFO_PALETTE.length]; });
 monitor(0, 0, FW, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, infoLabels);
 
 // Relógio grande: dia e data sem nome localizado, hora em 24h
@@ -730,25 +783,42 @@ monitor(marginX + 2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   { "disk/all/read": "Read", "disk/all/write": "Write" });
 
 print("DESK " + desk.id + " " + W + "x" + H + " " + placed.join("") + "\n");
+print("TRAYID " + top.id + " " + tray.id + "\n");
 JS
 )
   js="${js//@WALLPAPER@/$WALLPAPER}"
   js="${js//@LAUNCHERS@/$TASK_LAUNCHERS}"
   js="${js//@COLORIZER@/$colorizer}"
   js="${js//@BATTERY@/$(battery_sensor)}"
-  js="${js//@GPU@/$(gpu_sensor)}"
+  local gpu; gpu="$(gpu_sensor)"
+  js="${js//@GPU@/$gpu}"
+  js="${js//@GPU_TEMP@/$(gpu_temp_sensor "$gpu")}"
   local out
   out="$(plasma_js "$js")" || die "Falha ao aplicar o layout do Plasma"
   read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out")
   [[ -n "${DESK_GEOM:-}" ]] || die "O Plasma não devolveu as posições dos widgets: $out"
-
-  configure_tray
+  read -r _ TRAY_PANEL_ID TRAY_ID < <(grep '^TRAYID ' <<<"$out")
   ok "Painéis e widgets criados"
 }
 
-# Define os itens da bandeja. Roda após criar o layout e após cada reinício
-# do plasmashell: se a bandeja só ganhar containment depois de um reinício,
-# ele é novo e precisa receber os itens de novo
+# Grava os itens da bandeja com o plasmashell parado (Plasma recente, em que
+# a bandeja é o próprio containment). Configurar ao vivo uma bandeja recém-
+# criada faz o shell iniciar todos os itens de uma vez, o que derruba o
+# plasmashell 6.6 (crash dentro do QML dos applets) antes de ele salvar a
+# bandeja nova; na inicialização normal os mesmos itens carregam sem problema
+write_tray() {
+  [[ -n "${TRAY_ID:-}" ]] || return 0
+  local key
+  for key in extraItems knownItems; do
+    kwriteconfig6 --file plasma-org.kde.plasma.desktop-appletsrc --group Containments --group "$TRAY_PANEL_ID" \
+      --group Applets --group "$TRAY_ID" --group General --key "$key" "$TRAY_ITEMS"
+  done
+}
+
+# Define os itens da bandeja ao vivo. Roda após cada reinício do plasmashell:
+# em Plasma antigo a bandeja só ganha containment (SystrayContainmentId) depois
+# de iniciada, e ele precisa receber os itens; no recente, write_tray já gravou
+# os mesmos itens e isto só confere
 configure_tray() {
   # Onde ficam os itens depende da versão do Plasma:
   #   - antigas: a bandeja cria um containment próprio (SystrayContainmentId)
@@ -768,6 +838,9 @@ panels().forEach(function (p) {
     var tray = id ? desktopById(id) : t;
     if (!tray) return;   // Plasma antigo: containment ainda não criado
     tray.currentConfigGroup = ["General"];
+    // Já gravado por write_tray: regravar ao vivo faz a bandeja reiniciar os
+    // itens enquanto ainda os carrega, o que derruba o plasmashell 6.6
+    if (String(tray.readConfig("extraItems")) === ITEMS) { done++; return; }
     tray.writeConfig("extraItems", ITEMS);
     tray.writeConfig("knownItems", ITEMS);
     done++;
@@ -789,8 +862,11 @@ JS
   ((tray_ok)) || warn "Não consegui configurar os itens da bandeja (${tray_out:-sem resposta})"
 }
 
+# O plasmashell pode estar fora do serviço do systemd (ex.: reiniciado após
+# um crash); aí o "systemctl stop" não falha, mas também não o encerra
 stop_plasmashell() {
-  systemctl --user stop plasma-plasmashell.service 2>/dev/null || kquitapp6 plasmashell >/dev/null 2>&1 || true
+  systemctl --user stop plasma-plasmashell.service 2>/dev/null || true
+  pgrep -x plasmashell >/dev/null && { kquitapp6 plasmashell >/dev/null 2>&1 || true; }
   local _
   for _ in {1..30}; do pgrep -x plasmashell >/dev/null || return 0; sleep 0.5; done
   die "plasmashell não encerrou"
@@ -820,7 +896,7 @@ verify_layout() {
   local errors=() out saved
   out="$(plasma_js '
     panels().forEach(function (p) {
-      print("PANEL " + p.location + " " + p.widgets().map(function (w) { return w.type; }).join(",") + "\n");
+      print("PANEL " + p.location + " screen" + p.screen + " " + p.widgets().map(function (w) { return w.type; }).join(",") + "\n");
       p.widgets("org.kde.plasma.systemtray").forEach(function (t) {
         var id = t.readConfig("SystrayContainmentId"), tray = id ? desktopById(id) : t, ok = false;
         if (tray) { tray.currentConfigGroup = ["General"]; ok = !!tray.readConfig("extraItems"); }
@@ -831,6 +907,7 @@ verify_layout() {
     if (d) print("DESKW " + d.widgets().map(function (w) { return w.type; }).join(",") + "\n");
   ')"
   grep -q '^PANEL top .*org.kde.plasma.systemtray' <<<"$out" || errors+=("painel superior ausente ou sem bandeja")
+  grep '^PANEL ' <<<"$out" | grep -vq '^PANEL [a-z]* screen0 ' && errors+=("painel fora da tela principal: $(grep '^PANEL ' <<<"$out" | grep -v '^PANEL [a-z]* screen0 ' | cut -d' ' -f2-3 | tr '\n' ' ')")
   # Sem itens configurados, a bandeja pode ficar vazia e, com o painel em "fit", invisível
   grep -q '^TRAYC top ok' <<<"$out" || errors+=("bandeja do painel superior sem itens configurados")
   grep -q '^PANEL left .*org.kde.plasma.icontasks' <<<"$out" || errors+=("painel lateral ausente ou sem tarefas")
@@ -843,7 +920,8 @@ verify_layout() {
   # O Plasma encaixa os widgets numa grade de 16px, pode aumentar a altura até
   # o mínimo do widget e reescalar posições em outra resolução; por isso confere
   # a estrutura, com folga de 2 células (32px), e não a coordenada exata:
-  #   topo: começa à esquerda, largura toda, perto do y esperado
+  #   topo: os de largura toda começam à esquerda e cobrem a tela; os demais
+  #         ficam perto de x/largura esperados; todos perto do y
   #   base: da esquerda p/ direita sem sobreposição, cobrindo a largura,
   #         com a mesma largura (altura/base: só aviso)
   bad="$(python3 - "$DESK_GEOM" "$saved" "${DESK_RES%x*}" "${DESK_RES#*x}" <<'PY2'
@@ -863,8 +941,10 @@ for k, (x, y, w, h) in want.items():
         print(f"{k}: não encontrado"); continue
     gx, gy, gw, gh = g
     if y < H / 2:
-        if gx > TOL or gw < W - TOL:
+        if w >= W - TOL and (gx > TOL or gw < W - TOL):
             print(f"{k}: deveria ocupar a largura toda, atual x={gx:g} w={gw:g} (tela {W:g})")
+        if w < W - TOL and (abs(gx - x) > TOL or abs(gw - w) > TOL):
+            print(f"{k}: esperado x≈{x:g} w≈{w:g}, atual x={gx:g} w={gw:g}")
         if abs(gy - y) > 48:
             print(f"{k}: deveria estar no topo (y≈{y:g}), atual y={gy:g}")
     else:
@@ -906,6 +986,11 @@ step_layout() {
   apply_theme
   apply_icon_overrides
   apply_kwin
+  # Shell recém-iniciado: se ele já tiver removido uma bandeja (ex.: o usuário
+  # apagou um painel), criar outra o derruba (Plasma 6.6); ver apply_layout
+  info "Reiniciando o plasmashell antes de recriar os painéis"
+  stop_plasmashell
+  start_plasmashell
   apply_layout
 
   local attempt
@@ -913,6 +998,7 @@ step_layout() {
     info "Fixando posições dos widgets e reiniciando o plasmashell (tentativa $attempt/3)"
     stop_plasmashell
     write_geometry
+    write_tray
     start_plasmashell
     configure_tray
     if verify_layout; then
