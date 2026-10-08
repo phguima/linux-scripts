@@ -575,20 +575,20 @@ battery_sensor() {
 # Sensor de uso de GPU para o gráfico de CPU ("" se não houver).
 # Em híbridos (NVIDIA + integrada) usa só a integrada: ler a NVIDIA faz o
 # ksystemstats rodar "nvidia-smi dmon", que acorda a dGPU a cada 2s e impede
-# o RTD3. O ksystemstats numera as GPUs (gpu0, gpu1...) na ordem em que o udev
-# lista os cards DRM, ou seja, pelo caminho no sysfs; a mesma ordem aqui casa
-# cada gpuN com o vendor PCI (NVIDIA = 0x10de). Por garantia, também pula a
-# gpuN cujo nome (gpu/gpuN/name, que só a NVIDIA preenche) cite NVIDIA; ler o
-# nome não acorda a GPU.
+# o RTD3. O ksystemstats chama cada GPU pelo número do card DRM (card1 →
+# gpu1), não pela ordem; o vendor PCI do mesmo card diz se é NVIDIA (0x10de).
+# Por garantia, também pula a gpuN cujo nome (gpu/gpuN/name, que só a NVIDIA
+# preenche) cite NVIDIA; ler o nome não acorda a GPU.
 gpu_sensor() {
-  local d vendors=() nvidia=0 other=0
-  while read -r d; do
-    vendors+=("$(cat "$d/device/vendor" 2>/dev/null)")
-  done < <(for d in /sys/class/drm/card[0-9]*; do
-             [[ "$d" == *-* ]] || readlink -f "$d"   # pula conectores (card0-HDMI-A-1 etc.)
-           done | LC_ALL=C sort)
-  for d in "${vendors[@]}"; do
-    if [[ "$d" == 0x10de ]]; then nvidia=1; else other=1; fi
+  local d n vendor nvidia=0 other=0
+  local -A vendors=()   # número do card → vendor PCI
+  for d in /sys/class/drm/card[0-9]*; do
+    n="${d##*/card}"
+    [[ "$n" =~ ^[0-9]+$ ]] || continue   # pula conectores (card1-eDP-1 etc.)
+    vendor="$(cat "$d/device/vendor" 2>/dev/null)"
+    [[ -n "$vendor" ]] || continue
+    vendors[$n]="$vendor"
+    if [[ "$vendor" == 0x10de ]]; then nvidia=1; else other=1; fi
   done
 
   if ! command -v kstatsviewer >/dev/null; then
@@ -600,14 +600,12 @@ gpu_sensor() {
   grep -q '^gpu/all/usage ' <<<"$list" || return 0
   if ! ((nvidia && other)); then echo "gpu/all/usage"; return; fi
 
-  # Se a contagem não bater, o mapeamento não é confiável: sem GPU
-  (($(grep -cE '^gpu/gpu[0-9]+/usage ' <<<"$list") == ${#vendors[@]})) || return 0
-  local i name
-  for i in "${!vendors[@]}"; do
-    [[ "${vendors[i]}" != 0x10de ]] && grep -q "^gpu/gpu$i/usage " <<<"$list" || continue
-    name="$(timeout 5 kstatsviewer "gpu/gpu$i/name" 2>/dev/null | sed "s|^gpu/gpu$i/name ||")"
+  local name
+  for n in $(printf '%s\n' "${!vendors[@]}" | sort -n); do
+    [[ "${vendors[$n]}" != 0x10de ]] && grep -q "^gpu/gpu$n/usage " <<<"$list" || continue
+    name="$(timeout 5 kstatsviewer "gpu/gpu$n/name" 2>/dev/null | sed "s|^gpu/gpu$n/name ||")"
     [[ "$name" == *NVIDIA* ]] && continue
-    echo "gpu/gpu$i/usage"
+    echo "gpu/gpu$n/usage"
     return
   done
 }
