@@ -57,6 +57,28 @@ TRAY_ITEMS="org.kde.kdeconnect,org.kde.plasma.vault,org.kde.kscreen,org.kde.plas
 
 PANEL_COLORIZER_PRESET="Transparent"
 
+# Faixa de informações no topo da área de trabalho, na ordem de exibição:
+# sensor | rótulo | valor mais largo esperado (só para medir) | extra.
+# A face "textonly" divide a linha em colunas iguais, todas da largura do maior
+# item (rótulo + valor); se não couberem, quebra em outra linha e esconde
+# rótulos. Por isso os itens "extra" só entram se ainda couberem na tela,
+# medidos na hora com a fonte configurada (o kernel costuma ser o mais largo).
+# @GPU_TEMP@ e @BATTERY@ viram os sensores da máquina; sem eles, o item sai.
+# As cores seguem a posição, repetindo um ciclo de 6 cores quando os extras
+# entram e de 4 quando não (ver INFO_PALETTE no apply_layout)
+INFO_ITEMS=(
+  "os/system/uptime|Uptime|99 days 23:59:59|extra"
+  "cpu/all/averageTemperature|CPU Temperature|100.0 °C|"
+  "@GPU_TEMP@|GPU Temperature|100.0 °C|"
+  "os/kernel/version|Kernel|@KERNEL@|"
+  "os/plasma/plasmaVersion|KDE Plasma|@PLASMA@|"
+  "disk/all/usedPercent|Disk Usage|100%|"
+  "memory/physical/used|Used Memory|999.9 GiB|"
+  "memory/swap/used|Used Swap|999.9 GiB|extra"
+  "@BATTERY@/chargeRate|Charging Rate|-99.9 W|"
+  "@BATTERY@/chargePercentage|Charge Percentage|100%|"
+)
+
 # Ícone personalizado por app: arquivo .desktop | nome do ícone (do tema acima).
 # O .desktop é gerado a partir do instalado no sistema, trocando só o ícone
 # (se o app só tiver .desktop local, ele é editado no lugar); app não
@@ -714,6 +736,46 @@ gpu_temp_sensor() {
   return 0
 }
 
+# Itens da faixa de informações em JSON ([{id, label, width, extra}]), com os
+# sensores desta máquina e a largura de cada um (rótulo + valor, em px) medida
+# com o Pango na fonte do kdeglobals. Sem o Pango, width fica null e o layout
+# usa só os itens fixos
+info_items_json() {
+  local gpu_temp="$1" battery="$2" font kernel plasma
+  font="$(kreadconfig6 --file kdeglobals --group General --key font 2>/dev/null || true)"
+  kernel="$(uname -r)"
+  plasma="$(plasmashell --version 2>/dev/null | awk '{print $NF}')"
+  python3 -I - "${font:-Noto Sans,10}" "$gpu_temp" "$battery" "$kernel" "${plasma:-6.99.99}" "${INFO_ITEMS[@]}" <<'PY'
+import json, sys
+font, gpu_temp, battery, kernel, plasma, *rows = sys.argv[1:]
+family, size = (font.split(",") + ["10"])[:2]
+try:
+    import gi
+    gi.require_version("Pango", "1.0"); gi.require_version("PangoCairo", "1.0")
+    from gi.repository import Pango, PangoCairo
+    layout = Pango.Layout.new(PangoCairo.FontMap.get_default().create_context())
+    layout.set_font_description(Pango.FontDescription.from_string(f"{family} {size}"))
+    def width(s):
+        layout.set_text(s, -1)
+        return layout.get_pixel_extents()[1].width
+except Exception:
+    width = lambda s: None
+subst = {"@GPU_TEMP@": gpu_temp, "@BATTERY@": battery, "@KERNEL@": kernel, "@PLASMA@": plasma}
+items = []
+for row in rows:
+    sensor, label, sample, extra = row.split("|")
+    for k, v in subst.items():
+        if k in sensor or k in sample:
+            if not v: break
+            sensor, sample = sensor.replace(k, v), sample.replace(k, v)
+    else:
+        w = width(label), width(sample)
+        items.append({"id": sensor, "label": label, "extra": extra == "extra",
+                      "width": None if None in w else sum(w)})
+print(json.dumps(items, ensure_ascii=False))
+PY
+}
+
 apply_layout() {
   info "Recriando painéis e widgets"
 
@@ -727,9 +789,8 @@ apply_layout() {
 var WALLPAPER = "@WALLPAPER@";
 var LAUNCHERS = "@LAUNCHERS@";
 var COLORIZER = @COLORIZER@;
-var BATTERY = "@BATTERY@";   // ex.: "power/battery_BAT1" ("" se não houver bateria)
 var GPU = "@GPU@";        // ex.: "gpu/all/usage", "gpu/gpu1/usage" (só a integrada em híbridos) ou ""
-var GPU_TEMP = "@GPU_TEMP@";   // ex.: "gpu/gpu0/temperature" ("" se a GPU não informar temperatura)
+var INFO = @INFO@;        // itens da faixa de informações (ver INFO_ITEMS e info_items_json)
 
 function cfg(w, group, values) {
   w.currentConfigGroup = group;
@@ -813,28 +874,32 @@ function monitor(x, y, w, h, face, sensors, colors, labels) {
     cfg(m, ["org.kde.ksysguard.linechart", "General"], { showGridLines: false, showYAxisLabels: false });
 }
 
-// Faixa de informações do sistema (topo); bateria só se a máquina tiver.
-// A face "textonly" divide a linha em colunas iguais, todas da largura do
-// maior item; se não couberem, quebra em outra linha, e o rótulo some quando
-// o valor ocupa a coluna toda. O kernel é o valor mais longo: usa só a versão
-// (sem o "Linux "); swap e uptime ficam de fora para sobrar espaço para os rótulos
-var infoSensors = ["cpu/all/averageTemperature", "os/kernel/version", "os/plasma/plasmaVersion",
-  "disk/all/usedPercent", "memory/physical/used"];
-var infoLabels = { "cpu/all/averageTemperature": "CPU Temperature", "disk/all/usedPercent": "Disk Usage",
-  "memory/physical/used": "Used Memory", "os/kernel/version": "Kernel", "os/plasma/plasmaVersion": "KDE Plasma" };
-// Temperatura da GPU, se ela informar (ver gpu_temp_sensor)
-if (GPU_TEMP) {
-  infoSensors.splice(1, 0, GPU_TEMP);
-  infoLabels[GPU_TEMP] = "GPU Temperature";
+// Faixa de informações do sistema (topo). As colunas têm a largura do maior
+// item, separadas por gridUnit (o espaçamento do Legend da face); os extras
+// entram, na ordem, enquanto a linha inteira couber na largura da tela
+function infoFits(list) {
+  var widest = Math.max.apply(null, list.map(function (i) { return i.width; }));
+  return list.length * (widest + gridUnit) - gridUnit <= FW;
 }
-if (BATTERY) {
-  infoSensors.push(BATTERY + "/chargeRate", BATTERY + "/chargePercentage");
-  infoLabels[BATTERY + "/chargeRate"] = "Charging Rate";
-  infoLabels[BATTERY + "/chargePercentage"] = "Charge Percentage";
-}
-// Cores na ordem dos itens, repetindo o ciclo: #00aaff #ff5500 #55ff7f #ffff00
-var INFO_PALETTE = ["0,170,255", "255,85,0", "85,255,127", "255,255,0"], infoColors = {};
-infoSensors.forEach(function (id, i) { infoColors[id] = INFO_PALETTE[i % INFO_PALETTE.length]; });
+var chosen = INFO.filter(function (i) { return !i.extra; });
+INFO.forEach(function (i) {
+  if (i.extra && i.width !== null && chosen.every(function (c) { return c.width !== null; }) &&
+      infoFits(chosen.concat([i])))
+    chosen.push(i);
+});
+var infoItems = INFO.filter(function (i) { return chosen.indexOf(i) >= 0; });   // ordem original
+var infoSensors = [], infoLabels = {}, infoColors = {};
+// Cores na ordem dos itens, repetindo o ciclo. Com os extras (mais itens):
+// #00aaff #ff5500 #55ff7f #ffff7f #55ffff #ffaaff; sem eles: #00aaff #ff5500 #55ff7f #ffff00
+var withExtras = infoItems.some(function (i) { return i.extra; });
+var INFO_PALETTE = withExtras
+  ? ["0,170,255", "255,85,0", "85,255,127", "255,255,127", "85,255,255", "255,170,255"]
+  : ["0,170,255", "255,85,0", "85,255,127", "255,255,0"];
+infoItems.forEach(function (item, i) {
+  infoSensors.push(item.id);
+  infoLabels[item.id] = item.label;
+  infoColors[item.id] = INFO_PALETTE[i % INFO_PALETTE.length];
+});
 monitor(0, 0, FW, 64, "org.kde.ksysguard.textonly", infoSensors, infoColors, infoLabels);
 
 // Relógio grande: dia e data sem nome localizado, hora em 24h
@@ -863,6 +928,8 @@ monitor(marginX + 2 * third, y, third, BOTTOM_H, "org.kde.ksysguard.linechart",
   { "disk/all/read": "255,85,0", "disk/all/write": "0,170,255" },
   { "disk/all/read": "Read", "disk/all/write": "Write" });
 
+print("INFO " + infoItems.length + "/" + INFO.length + " " + FW + "px " +
+  infoItems.map(function (i) { return i.label + "=" + i.width; }).join(", ") + "\n");
 print("DESK " + desk.id + " " + W + "x" + H + " " + placed.join("") + "\n");
 print("TRAYID " + top.id + " " + tray.id + "\n");
 JS
@@ -870,14 +937,15 @@ JS
   js="${js//@WALLPAPER@/$WALLPAPER}"
   js="${js//@LAUNCHERS@/$TASK_LAUNCHERS}"
   js="${js//@COLORIZER@/$colorizer}"
-  js="${js//@BATTERY@/$(battery_sensor)}"
   local gpu; gpu="$(gpu_sensor)"
   js="${js//@GPU@/$gpu}"
-  js="${js//@GPU_TEMP@/$(gpu_temp_sensor "$gpu")}"
+  js="${js//@INFO@/$(info_items_json "$(gpu_temp_sensor "$gpu")" "$(battery_sensor)")}"
   local out
   out="$(plasma_js "$js")" || die "Falha ao aplicar o layout do Plasma"
   read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out") || true
   [[ -n "${DESK_GEOM:-}" ]] || die "O Plasma não devolveu as posições dos widgets: $out"
+  local info_line; info_line="$(grep -m1 '^INFO ' <<<"$out" || true)"
+  [[ -n "$info_line" ]] && info "Faixa de informações: ${info_line#INFO }"
   read -r _ TRAY_PANEL_ID TRAY_ID < <(grep '^TRAYID ' <<<"$out") || true
   ok "Painéis e widgets criados"
 }
