@@ -793,9 +793,9 @@ JS
   js="${js//@GPU_TEMP@/$(gpu_temp_sensor "$gpu")}"
   local out
   out="$(plasma_js "$js")" || die "Falha ao aplicar o layout do Plasma"
-  read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out")
+  read -r _ DESK_ID DESK_RES DESK_GEOM < <(grep '^DESK ' <<<"$out") || true
   [[ -n "${DESK_GEOM:-}" ]] || die "O Plasma não devolveu as posições dos widgets: $out"
-  read -r _ TRAY_PANEL_ID TRAY_ID < <(grep '^TRAYID ' <<<"$out")
+  read -r _ TRAY_PANEL_ID TRAY_ID < <(grep '^TRAYID ' <<<"$out") || true
   ok "Painéis e widgets criados"
 }
 
