@@ -27,6 +27,15 @@ LOOK_AND_FEEL="org.kde.breezedark.desktop"
 ICON_THEME="Ars-Dark-Icons"
 FONT_FAMILY="Roboto Medium"          # instalada no passo 1 se faltar
 
+# Pacote que fornece FONT_FAMILY em cada gerenciador: gerenciador | pacote.
+# Ao trocar a fonte, troque também os pacotes
+FONT_PACKAGES=(
+  "dnf|google-roboto-fonts"
+  "apt-get|fonts-roboto"
+  "pacman|ttf-roboto"
+  "zypper|google-roboto-fonts"
+)
+
 # Vem em assets/wallpapers/ ao lado do script e é copiado para a pasta de
 # imagens do usuário (~/Pictures/wallpapers), se ainda não estiver lá
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -364,12 +373,19 @@ step_font() {
     ok "Fonte '$FONT_FAMILY' já instalada"
     return
   fi
-  local cmd
-  if command -v dnf >/dev/null; then cmd=(dnf install -y google-roboto-fonts)
-  elif command -v apt-get >/dev/null; then cmd=(apt-get install -y fonts-roboto)
-  elif command -v pacman >/dev/null; then cmd=(pacman -S --noconfirm ttf-roboto)
-  elif command -v zypper >/dev/null; then cmd=(zypper install -y google-roboto-fonts)
-  else warn "Gerenciador de pacotes não suportado — instale a fonte '$FONT_FAMILY' manualmente"; return
+  local entry pm pkg cmd=()
+  for entry in "${FONT_PACKAGES[@]}"; do
+    IFS='|' read -r pm pkg <<<"$entry"
+    command -v "$pm" >/dev/null || continue
+    case "$pm" in
+      pacman) cmd=(pacman -S --noconfirm "$pkg") ;;
+      *)      cmd=("$pm" install -y "$pkg") ;;
+    esac
+    break
+  done
+  if ((${#cmd[@]} == 0)); then
+    warn "Gerenciador de pacotes não suportado — instale a fonte '$FONT_FAMILY' manualmente"
+    return
   fi
   info "Instalando a fonte '$FONT_FAMILY' (sudo ${cmd[*]})"
   if sudo "${cmd[@]}"; then
