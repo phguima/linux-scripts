@@ -471,7 +471,22 @@ apply_theme() {
   plasma-apply-lookandfeel --apply "$LOOK_AND_FEEL" >/dev/null 2>&1 || warn "Falha ao aplicar $LOOK_AND_FEEL"
 
   info "Ícones: $ICON_THEME"
-  /usr/libexec/plasma-changeicons "$ICON_THEME" >/dev/null 2>&1 || warn "Tema de ícones $ICON_THEME não encontrado"
+  # O plasma-changeicons fica fora do PATH, em lugar diferente por distro:
+  # /usr/libexec (Fedora, openSUSE), /usr/lib/<multiarch>/libexec (Debian,
+  # Ubuntu), /usr/lib (Arch)
+  local changeicons="" c
+  for c in /usr/libexec/plasma-changeicons /usr/lib/*/libexec/plasma-changeicons \
+           /usr/lib/libexec/plasma-changeicons /usr/lib/plasma-changeicons \
+           "$(command -v plasma-changeicons 2>/dev/null || true)"; do
+    [[ -x "$c" ]] && { changeicons="$c"; break; }
+  done
+  if [[ -z "$changeicons" ]]; then
+    # Sem a ferramenta: grava direto (vale para apps abertos após o login)
+    warn "plasma-changeicons não encontrado — gravando o tema no kdeglobals"
+    kwriteconfig6 --file kdeglobals --group Icons --key Theme "$ICON_THEME"
+  elif ! "$changeicons" "$ICON_THEME" >/dev/null 2>&1; then
+    warn "Tema de ícones $ICON_THEME não encontrado"
+  fi
 
   info "Fontes: $FONT_FAMILY"
   local k
