@@ -35,6 +35,11 @@ FONT_PACKAGES=(
   "pacman|ttf-roboto"
   "zypper|google-roboto-fonts"
 )
+# Sem pacote nos repositórios (ex.: AlmaLinux/EL10): última release oficial,
+# instalada na mesma pasta e com o mesmo .version que o aapi usa, para os dois
+# não duplicarem a fonte
+FONT_RELEASE_API="https://api.github.com/repos/googlefonts/roboto-3-classic/releases/latest"
+FONT_RELEASE_DIR="/usr/local/share/fonts/roboto"
 
 # Vem em assets/wallpapers/ ao lado do script e é copiado para a pasta de
 # imagens do usuário (~/Pictures/wallpapers), se ainda não estiver lá
@@ -383,18 +388,65 @@ step_font() {
     esac
     break
   done
-  if ((${#cmd[@]} == 0)); then
-    warn "Gerenciador de pacotes não suportado — instale a fonte '$FONT_FAMILY' manualmente"
-    return
+  if ((${#cmd[@]} > 0)); then
+    info "Instalando a fonte '$FONT_FAMILY' (sudo ${cmd[*]})"
+    if sudo "${cmd[@]}"; then
+      fc-cache -f >/dev/null 2>&1 || true
+    else
+      warn "Pacote indisponível — tentando a release oficial"
+    fi
   fi
-  info "Instalando a fonte '$FONT_FAMILY' (sudo ${cmd[*]})"
-  if sudo "${cmd[@]}"; then
-    fc-cache -f >/dev/null 2>&1 || true
+  if ! fc-list : family | grep -iF "$FONT_FAMILY" >/dev/null; then
+    info "Instalando a fonte '$FONT_FAMILY' da última release ($FONT_RELEASE_API)"
+    install_font_release || true
+  fi
+  if fc-list : family | grep -iF "$FONT_FAMILY" >/dev/null; then
     ok "Fonte instalada"
   else
     warn "Falha ao instalar a fonte — o layout será aplicado com a fonte padrão"
   fi
 }
+
+# Baixa a última release (zip), confere o SHA-256 que o GitHub publica e
+# instala só os TTFs estáticos hinted (os mesmos dos pacotes; a fonte variável
+# junto duplicaria as famílias). Roda em subshell para limpar o temporário
+install_font_release() (
+  command -v curl >/dev/null || { warn "curl não encontrado"; exit 1; }
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp:?}"' EXIT
+  curl -fsSL -H 'Accept: application/vnd.github+json' "$FONT_RELEASE_API" -o "$tmp/release.json" ||
+    { warn "Não consegui consultar $FONT_RELEASE_API"; exit 1; }
+  read -r tag url digest < <(python3 -I -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+a = next((a for a in d.get("assets", []) if a["name"].endswith(".zip")), None)
+if a: print(d["tag_name"], a["browser_download_url"], a.get("digest") or "")
+' "$tmp/release.json") || true
+  [[ -n "${url:-}" ]] || { warn "Release sem arquivo .zip"; exit 1; }
+
+  info "Baixando $tag"
+  curl -fL --progress-bar "$url" -o "$tmp/font.zip" || { warn "Falha no download"; exit 1; }
+  if [[ "$digest" == sha256:* ]]; then
+    sha256sum -c --quiet - <<<"${digest#sha256:}  $tmp/font.zip" || { warn "SHA-256 não confere"; exit 1; }
+  fi
+  python3 -I -c '
+import os, re, sys, zipfile
+z, out = zipfile.ZipFile(sys.argv[1]), sys.argv[2]
+os.makedirs(out)
+for n in z.namelist():
+    if re.match(r"hinted/static/[^/.][^/]*\.ttf$", n):   # sem o lixo __MACOSX/._*
+        with open(os.path.join(out, os.path.basename(n)), "wb") as f:
+            f.write(z.read(n))
+' "$tmp/font.zip" "$tmp/ttf"
+  compgen -G "$tmp/ttf/*.ttf" >/dev/null || { warn "Nenhum TTF hinted/static no zip"; exit 1; }
+
+  info "Instalando em $FONT_RELEASE_DIR (sudo)"
+  sudo rm -rf "${FONT_RELEASE_DIR:?}"
+  sudo install -d -m 0755 "$FONT_RELEASE_DIR"
+  sudo install -m 0644 "$tmp"/ttf/*.ttf "$FONT_RELEASE_DIR/"
+  echo "$tag" | sudo tee "$FONT_RELEASE_DIR/.version" >/dev/null
+  sudo fc-cache -f "$FONT_RELEASE_DIR" >/dev/null 2>&1 || true
+)
 
 # ========================================================= 2) ASSETS =========
 
