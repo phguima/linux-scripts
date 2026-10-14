@@ -387,7 +387,6 @@ info() { printf '\e[36m::\e[0m %s\n' "$*"; }
 ok()   { printf '\e[32m✔\e[0m %s\n' "$*"; }
 warn() { printf '\e[33m!\e[0m %s\n' "$*"; }
 die()  { printf '\e[31m✘\e[0m %s\n' "$*" >&2; exit 1; }
-ask()  { local a; read -rp "$1 " a; [[ "$a" =~ ^[sS] ]]; }
 
 qdbus() { if command -v qdbus-qt6 >/dev/null; then qdbus-qt6 "$@"; else qdbus6 "$@"; fi; }
 plasma_js() { qdbus org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "$1"; }
