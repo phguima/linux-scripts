@@ -578,11 +578,15 @@ apply_theme() {
   fi
 
   info "Fontes: $FONT_FAMILY"
+  # Formato de 17 campos do QFont::toString (o último, styleName, vazio). O Qt
+  # 6.11+ grava 19 (contagens de features e eixos variáveis), mas o Qt até 6.10
+  # recusa mais de 17 ("QFont::fromString: Invalid description") e cai na fonte
+  # padrão; o 6.11+ lê os 17. Flatpaks leem este kdeglobals com o Qt do runtime
   local k
   for k in font:10 menuFont:10 toolBarFont:9 smallestReadableFont:8; do
-    kwriteconfig6 --file kdeglobals --group General --key "${k%%:*}" "$FONT_FAMILY,${k##*:},-1,5,400,0,0,0,0,0,0,0,0,0,0,1,,0,0"
+    kwriteconfig6 --file kdeglobals --group General --key "${k%%:*}" "$FONT_FAMILY,${k##*:},-1,5,400,0,0,0,0,0,0,0,0,0,0,1,"
   done
-  kwriteconfig6 --file kdeglobals --group WM --key activeFont "$FONT_FAMILY,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1,,0,0"
+  kwriteconfig6 --file kdeglobals --group WM --key activeFont "$FONT_FAMILY,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1,"
   kwriteconfig6 --file kdeglobals --group General --key XftAntialias true
   kwriteconfig6 --file kdeglobals --group General --key XftHintStyle hintslight
   kwriteconfig6 --file kdeglobals --group General --key XftSubPixel none
