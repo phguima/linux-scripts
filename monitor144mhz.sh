@@ -1,5 +1,5 @@
 #!/bin/sh
-# Busca dinamicamente os modos de saída compatíveis com 144Hz
+# Dynamically finds the output modes compatible with 144Hz
 ARGS=$(python3 -c '
 import sys, json, subprocess
 try:
@@ -16,7 +16,7 @@ try:
         if not w or not h:
             continue
         
-        # Procura por um modo com a mesma resolução e a taxa de atualização alvo (±1.0 Hz)
+        # Looks for a mode with the same resolution and the target refresh rate (±1.0 Hz)
         best_mode = None
         for m in out.get("modes", []):
             if m["size"]["width"] == w and m["size"]["height"] == h:
@@ -31,11 +31,11 @@ except Exception as e:
 ')
 
 if [ -n "$ARGS" ]; then
-    echo "Configurando monitores: $ARGS"
+    echo "Configuring monitors: $ARGS"
     # shellcheck disable=SC2086  # ARGS must split into separate kscreen-doctor arguments
     kscreen-doctor $ARGS
 else
-    echo "Nenhum monitor compatível com 144Hz foi encontrado."
+    echo "No monitor compatible with 144Hz was found."
 fi
 
 if pgrep -f "org.ferdium.Ferdium" > /dev/null; then

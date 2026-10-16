@@ -1,22 +1,22 @@
 # linux-scripts
 
-Coleção de scripts shell para configurar e manter desktops Linux (principalmente Fedora, com GNOME ou KDE Plasma).
+A collection of shell scripts to set up and maintain Linux desktops (mostly Fedora, with GNOME or KDE Plasma).
 
 ## Scripts
 
-| Script | O que faz | Ambiente |
+| Script | What it does | Environment |
 | --- | --- | --- |
-| [`cleanup_old_kernels.sh`](cleanup_old_kernels.sh) | Remove os kernels antigos instalados, mantendo só o mais recente | Fedora (dnf) |
-| [`convert-to-md.sh`](convert-to-md.sh) | Converte todos os PDFs do diretório pai para Markdown | `markitdown` |
-| [`extensions-restore.sh`](extensions-restore.sh) | Restaura as configurações das extensões do GNOME Shell a partir de backups | GNOME |
-| [`fix-cedilla.sh`](fix-cedilla.sh) | Faz `'` + `c` gerar `ç` em vez de `ć` | X11/Wayland |
-| [`install-vbox-ga.sh`](install-vbox-ga.sh) | Instala o VirtualBox Guest Additions na mesma versão do host | VM VirtualBox (dnf/yum/apt) |
-| [`monitor60mhz.sh`](monitor60mhz.sh) / [`monitor144mhz.sh`](monitor144mhz.sh) | Muda a taxa de atualização dos monitores para 60 Hz / 144 Hz | KDE Plasma |
-| [`plasma-setup.sh`](plasma-setup.sh) | Aplica o layout completo do KDE Plasma (tema, painéis, widgets, KZones) | KDE Plasma 6 |
-| [`tweaks-gnome-shell.sh`](tweaks-gnome-shell.sh) | Ajustes de fontes, janelas e temas do GNOME | GNOME |
-| [`user-backup.sh`](user-backup.sh) | Compacta as pastas pessoais em `~/<hostname>/` | — |
+| [`cleanup_old_kernels.sh`](cleanup_old_kernels.sh) | Removes old installed kernels, keeping only the latest one | Fedora (dnf) |
+| [`convert-to-md.sh`](convert-to-md.sh) | Converts all PDFs in the parent directory to Markdown | `markitdown` |
+| [`extensions-restore.sh`](extensions-restore.sh) | Restores GNOME Shell extension settings from backups | GNOME |
+| [`fix-cedilla.sh`](fix-cedilla.sh) | Makes `'` + `c` produce `ç` instead of `ć` | X11/Wayland |
+| [`install-vbox-ga.sh`](install-vbox-ga.sh) | Installs VirtualBox Guest Additions matching the host version | VirtualBox VM (dnf/yum/apt) |
+| [`monitor60mhz.sh`](monitor60mhz.sh) / [`monitor144mhz.sh`](monitor144mhz.sh) | Switches the monitors' refresh rate to 60 Hz / 144 Hz | KDE Plasma |
+| [`plasma-setup.sh`](plasma-setup.sh) | Applies the full KDE Plasma layout (theme, panels, widgets, KZones) | KDE Plasma 6 |
+| [`tweaks-gnome-shell.sh`](tweaks-gnome-shell.sh) | GNOME font, window and theme tweaks | GNOME |
+| [`user-backup.sh`](user-backup.sh) | Archives the personal folders into `~/<hostname>/` | — |
 
-## Detalhes
+## Details
 
 ### cleanup_old_kernels.sh
 
@@ -24,7 +24,7 @@ Coleção de scripts shell para configurar e manter desktops Linux (principalmen
 sudo ./cleanup_old_kernels.sh
 ```
 
-Usa `dnf repoquery --installonly --latest-limit=-1` para listar os kernels antigos e pede confirmação antes de removê-los.
+Uses `dnf repoquery --installonly --latest-limit=-1` to list the old kernels and asks for confirmation before removing them.
 
 ### convert-to-md.sh
 
@@ -33,7 +33,7 @@ pip install markitdown
 ./convert-to-md.sh
 ```
 
-Procura PDFs recursivamente no diretório **pai** do script e gera um `.md` ao lado de cada um. Pula os PDFs cujo `.md` já está mais recente.
+Searches for PDFs recursively in the script's **parent** directory and writes a `.md` next to each one. Skips PDFs whose `.md` is already newer.
 
 ### extensions-restore.sh
 
@@ -41,7 +41,7 @@ Procura PDFs recursivamente no diretório **pai** do script e gera um `.md` ao l
 ./extensions-restore.sh
 ```
 
-Carrega com `dconf load` cada `<extensão>.config` de `~/Backups/Gnome/Configs/Extensions/` em `/org/gnome/shell/extensions/<extensão>/` (`impatience` vai para o caminho `net/gfxmonk/`).
+Loads each `<extension>.config` from `~/Backups/Gnome/Configs/Extensions/` into `/org/gnome/shell/extensions/<extension>/` with `dconf load` (`impatience` goes to the `net/gfxmonk/` path).
 
 ### fix-cedilla.sh
 
@@ -49,25 +49,25 @@ Carrega com `dconf load` cada `<extensão>.config` de `~/Backups/Gnome/Configs/E
 ./fix-cedilla.sh
 ```
 
-Cria `~/.XCompose` a partir do arquivo Compose do sistema ou, se ele já existir, edita no lugar (com backup `.bak`). Troca tanto as strings (`ć`/`Ć`) quanto os keysyms (`U0107`/`U0106`), para funcionar também em apps que leem o keysym (ex.: Chromium no Wayland). Pode ser rodado de novo sem efeito. Faça logout/login depois.
+Creates `~/.XCompose` from the system Compose file or, if it already exists, edits it in place (with a `.bak` backup). Replaces both the strings (`ć`/`Ć`) and the keysyms (`U0107`/`U0106`), so it also works in apps that read the keysym (e.g. Chromium on Wayland). Safe to run again. Log out and back in afterwards.
 
-Baseado em [gnome-cedilla-fix](https://github.com/marcopaganini/gnome-cedilla-fix).
+Based on [gnome-cedilla-fix](https://github.com/marcopaganini/gnome-cedilla-fix).
 
 ### install-vbox-ga.sh
 
-Roda **dentro da VM** e aborta se não detectar VirtualBox.
+Runs **inside the VM** and aborts if VirtualBox isn't detected.
 
 ```sh
-sudo ./install-vbox-ga.sh                      # detecta a versão do host e instala/atualiza
-sudo ./install-vbox-ga.sh --force              # reinstala mesmo se a versão já bater
-sudo ./install-vbox-ga.sh --pkg                # usa os pacotes da distro
-sudo VBOX_VERSION=7.1.4 ./install-vbox-ga.sh   # força uma versão (ou VBOX_VERSION=latest)
+sudo ./install-vbox-ga.sh                      # detects the host version and installs/updates
+sudo ./install-vbox-ga.sh --force              # reinstalls even if the version already matches
+sudo ./install-vbox-ga.sh --pkg                # uses the distro packages
+sudo VBOX_VERSION=7.1.4 ./install-vbox-ga.sh   # forces a version (or VBOX_VERSION=latest)
 ```
 
-- Detecta a versão do host via SMBIOS, `dmidecode` ou `VBoxControl`.
-- Usa o CD de Guest Additions inserido se a versão bater; senão baixa o ISO de download.virtualbox.org.
-- Remove os pacotes de GA da distro (conflitam com o do ISO) e instala as dependências de compilação (`kernel-devel`/`linux-headers`).
-- Adiciona o usuário que chamou o `sudo` ao grupo `vboxsf`.
+- Detects the host version via SMBIOS, `dmidecode` or `VBoxControl`.
+- Uses the inserted Guest Additions CD if the version matches; otherwise downloads the ISO from download.virtualbox.org.
+- Removes the distro GA packages (they conflict with the ISO one) and installs the build dependencies (`kernel-devel`/`linux-headers`).
+- Adds the user who invoked `sudo` to the `vboxsf` group.
 
 ### monitor60mhz.sh / monitor144mhz.sh
 
@@ -75,7 +75,7 @@ sudo VBOX_VERSION=7.1.4 ./install-vbox-ga.sh   # força uma versão (ou VBOX_VER
 ./monitor144mhz.sh
 ```
 
-Para cada monitor conectado, escolhe via `kscreen-doctor` o modo com a resolução atual e a taxa alvo (±1 Hz). Depois reinicia o Ferdium (Flatpak), se estiver aberto. Requer `python3`.
+For each connected monitor, picks via `kscreen-doctor` the mode with the current resolution and the target rate (±1 Hz). Then restarts Ferdium (Flatpak), if it's running. Requires `python3`.
 
 ### plasma-setup.sh
 
@@ -83,15 +83,15 @@ Para cada monitor conectado, escolhe via `kscreen-doctor` o modo com a resoluç�
 ./plasma-setup.sh
 ```
 
-Precisa de uma sessão Plasma 6 em execução. Etapas:
+Requires a running Plasma 6 session. Steps:
 
-1. **Fonte** — instala o Roboto se faltar (dnf/apt/pacman/zypper, pede `sudo`).
-2. **Assets da KDE Store** — abre as janelas "Obter novos..." para instalar manualmente Advanced Modern Clock, Panel Colorizer, Ars Icons e KZones, e verifica a instalação antes de continuar.
-3. **Layout** — faz backup das configs em `~/.config/plasma-setup-backup-<data>/`, aplica tema Breeze Dark, ícones (incluindo ícones personalizados de apps), fontes, wallpaper, 4 áreas de trabalho em 2 linhas, layouts do KZones, recria os painéis (superior e lateral) e os widgets da área de trabalho (relógio e monitores do sistema) na tela principal. Reinicia o plasmashell e confere o resultado (até 3 tentativas).
+1. **Font** — installs Roboto if missing (dnf/apt/pacman/zypper, asks for `sudo`).
+2. **KDE Store assets** — opens the "Get New..." windows to manually install Advanced Modern Clock, Panel Colorizer, Ars Icons and KZones, and checks the installation before continuing.
+3. **Layout** — backs up the configs to `~/.config/plasma-setup-backup-<date>/`, applies the Breeze Dark theme, icons (including custom app icons), fonts, wallpaper, 4 virtual desktops in 2 rows, KZones layouts, disables the accent popup when holding a key (plasma-keyboard, Plasma 6.7+, without logout), makes Dolphin open in the home folder, and rebuilds the panels (top and side) and the desktop widgets (clock and system monitors) on the primary screen. Restarts plasmashell and checks the result (up to 3 attempts).
 
-Tudo o que é aplicado fica na seção `DEFINIÇÕES` no topo do script. O wallpaper fica em `assets/wallpapers/` e é copiado para `~/Pictures/wallpapers/` se ainda não estiver lá (por isso, rode o script de dentro do repositório clonado). Faça logout/login no final.
+Everything that gets applied lives in the `DEFINITIONS` section at the top of the script. The wallpaper is in `assets/wallpapers/` and is copied to `~/Pictures/wallpapers/` if it isn't there yet (so run the script from inside the cloned repository). Log out and back in at the end.
 
-> **Pendente de teste:** a primeira execução numa sessão nova, com o painel padrão do Plasma (inferior, com bandeja). No Plasma 6.6 (AlmaLinux 10, Qt 6.10), remover uma bandeja e criar outra derruba o plasmashell; o script se protege criando os painéis novos antes de remover os antigos e reiniciando o plasmashell antes de recriar o layout. Para testar sem mexer no seu layout: crie um usuário de teste, entre nele uma vez com o Plasma e rode o script lá.
+> **Pending test:** the first run in a fresh session, with Plasma's default panel (bottom, with tray). On Plasma 6.6 (AlmaLinux 10, Qt 6.10), removing a tray and creating another one crashes plasmashell; the script guards against this by creating the new panels before removing the old ones and restarting plasmashell before rebuilding the layout. To test without touching your layout: create a test user, log into it once with Plasma and run the script there.
 
 ### tweaks-gnome-shell.sh
 
@@ -99,10 +99,10 @@ Tudo o que é aplicado fica na seção `DEFINIÇÕES` no topo do script. O wallp
 ./tweaks-gnome-shell.sh
 ```
 
-Menu interativo:
+Interactive menu:
 
-1. **Antes do tema** — fontes Roboto Medium, hinting/antialiasing, escala de texto 0.88, botões de janela, centralizar novas janelas, desativa a extensão `background-logo`.
-2. **Depois do tema** — ativa `user-theme` e aplica os temas WhiteSur-Dark-nord (GTK), Nordzy (ícones) e Sunity (cursor).
+1. **Before the theme** — Roboto Medium fonts, hinting/antialiasing, 0.88 text scaling, window buttons, center new windows, disables the `background-logo` extension.
+2. **After the theme** — enables `user-theme` and applies the WhiteSur-Dark-nord (GTK), Nordzy (icons) and Sunity (cursor) themes.
 
 ### user-backup.sh
 
@@ -110,6 +110,6 @@ Menu interativo:
 ./user-backup.sh
 ```
 
-Gera um `.tar.gz` em `~/<hostname>/` para cada pasta existente: `Backups`, `Documents`, `Downloads`, `Music`, `Pictures`, `Profiles`, `Videos` e `wks`.
+Creates a `.tar.gz` in `~/<hostname>/` for each existing folder: `Backups`, `Documents`, `Downloads`, `Music`, `Pictures`, `Profiles`, `Videos` and `wks`.
 
-> **Atenção:** a pasta `~/<hostname>/` é apagada e recriada a cada execução.
+> **Warning:** the `~/<hostname>/` folder is deleted and recreated on every run.
