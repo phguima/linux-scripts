@@ -549,7 +549,7 @@ backup_configs() {
   BACKUP_DIR="$HOME/.config/plasma-setup-backup-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"
   local f
-  for f in plasma-org.kde.plasma.desktop-appletsrc plasmashellrc kdeglobals kwinrc kscreenlockerrc; do
+  for f in plasma-org.kde.plasma.desktop-appletsrc plasmashellrc kdeglobals kwinrc kscreenlockerrc plasmakeyboardrc dolphinrc; do
     [[ -f "$HOME/.config/$f" ]] && cp -a "$HOME/.config/$f" "$BACKUP_DIR/"
   done
   ok "Backup das configs atuais em $BACKUP_DIR"
@@ -653,6 +653,34 @@ apply_kwin() {
   done
   qdbus "${vdm[@]}" "$iface.rows" "$VIRTUAL_DESKTOP_ROWS" >/dev/null 2>&1 || true
   ok "KWin configurado"
+}
+
+# "Show popup when holding a key" (acentos ao segurar uma tecla) vem do
+# plasma-keyboard (Plasma 6.7+); em versões sem ele, a opção não existe.
+# Ele só lê a config ao iniciar; o KWin o relança quando ele sai por sinal
+# (trata como crash), então encerrá-lo aplica a mudança sem logout
+apply_keyboard() {
+  command -v plasma-keyboard >/dev/null || return 0
+  info "Teclado: popup de acentos ao segurar uma tecla desativado"
+  [[ "$(kreadconfig6 --file plasmakeyboardrc --group General --key diacriticsPopupEnabled)" == false ]] && return 0
+  kwriteconfig6 --file plasmakeyboardrc --group General --key diacriticsPopupEnabled false
+  local old _
+  old="$(pgrep -x plasma-keyboard || true)"
+  [[ -n "$old" ]] || return 0
+  pkill -x plasma-keyboard || true
+  for _ in {1..20}; do
+    sleep 0.5
+    [[ "$(pgrep -x plasma-keyboard || true)" =~ ^[0-9]+$ && "$(pgrep -x plasma-keyboard)" != "$old" ]] && return 0
+  done
+  warn "O KWin não relançou o plasma-keyboard — o popup só some após logout/login"
+}
+
+# Dolphin abre sempre na pasta pessoal ("Show on startup"), em vez de
+# restaurar as pastas e abas da última vez
+apply_dolphin() {
+  info "Dolphin: abre na pasta pessoal ($HOME)"
+  kwriteconfig6 --file dolphinrc --group General --key RememberOpenedTabs false
+  kwriteconfig6 --file dolphinrc --group General --key HomeUrl "$HOME"
 }
 
 # Sensor da bateria do sistema (BAT0, BAT1...), ignorando periféricos (mouse etc.).
@@ -1138,6 +1166,8 @@ step_layout() {
   apply_theme
   apply_icon_overrides
   apply_kwin
+  apply_keyboard
+  apply_dolphin
   # Shell recém-iniciado: se ele já tiver removido uma bandeja (ex.: o usuário
   # apagou um painel), criar outra o derruba (Plasma 6.6); ver apply_layout
   info "Reiniciando o plasmashell antes de recriar os painéis"
